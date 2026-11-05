@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="ru">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="theme-color" content="#fbfaf7" />
+    <title>plain — заметки</title>
+    <meta name="description" content="Одна страница, автосохранение, экспорт. Блокнот без интерфейса." />
+    <meta property="og:title" content="plain — заметки" />
+    <meta property="og:description" content="Одна страница, автосохранение, экспорт." />
+    <meta property="og:type" content="website" />
+    <script>
+      try {
+        const t = localStorage.getItem('plain.theme.v1');
+        if (t === 'dark' || t === 'light') document.documentElement.dataset.theme = t;
+      } catch (e) {}
+    </script>
+    <script type="module" crossorigin src="/notes/assets/index-CgHPHa8i.js"></script>
+    <link rel="stylesheet" crossorigin href="/notes/assets/index-CWXG2fvg.css">
+  </head>
+  <body>
+    <main id="app"></main>
+  </body>
+</html>

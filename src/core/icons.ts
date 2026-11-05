@@ -1,0 +1,67 @@
+/**
+ * Hand-drawn stroke icon set. Every icon is a 24x24 path using currentColor,
+ * so icons inherit the surrounding typography colour.
+ */
+const paths: Record<string, string> = {
+  key: '<circle cx="8" cy="15" r="3.2"/><path d="M10.4 12.6 19 4m-3 0h3v3M14 9l2 2"/>',
+  qr: '<rect x="3.5" y="3.5" width="6.5" height="6.5" rx="1"/><rect x="14" y="3.5" width="6.5" height="6.5" rx="1"/><rect x="3.5" y="14" width="6.5" height="6.5" rx="1"/><path d="M14 14h2.5v2.5H14zM18 14h2.5M14 18v2.5M18 20.5h2.5V18"/>',
+  weather: '<circle cx="9" cy="9" r="3.4"/><path d="M9 2.8v1.6M9 13.6v1.6M2.8 9h1.6M13.6 9h1.6M4.6 4.6l1.1 1.1M12.3 12.3l1.1 1.1M13.4 4.6l-1.1 1.1M5.7 12.3l-1.1 1.1"/><path d="M8.5 20.5h8a3.2 3.2 0 0 0 .3-6.4A4.3 4.3 0 0 0 9 14.6a3 3 0 0 0-.5 5.9Z"/>',
+  stars: '<path d="m12 3 2.1 5.4 5.9.4-4.5 3.8 1.4 5.8-4.9-3-4.9 3 1.4-5.8L4 8.8l5.9-.4L12 3Z"/><path d="M19 16.5v3M17.5 18h3"/>',
+  notes: '<path d="M6 3.5h9.5L19 7v13.5H6z"/><path d="M15 3.5V7h4M9 11h7M9 14.5h7M9 18h4"/>',
+  grid: '<rect x="3.5" y="3.5" width="17" height="17" rx="2.5"/><path d="M9 3.5v17M15 3.5v17M3.5 9h17M3.5 15h17"/>',
+  cards: '<rect x="3" y="5.5" width="8" height="13" rx="1.6"/><rect x="13" y="5.5" width="8" height="13" rx="1.6"/><path d="M6 9.5h2M16 9.5h2"/>',
+  route: '<circle cx="6" cy="6" r="2.4"/><circle cx="18" cy="18" r="2.4"/><path d="M8.4 6H15a3 3 0 0 1 0 6H9a3 3 0 0 0 0 6h6.6"/>',
+  palette: '<path d="M12 3.2a8.8 8.8 0 1 0 0 17.6c1.5 0 2.1-.9 2.1-1.9 0-1.6 1.3-2.1 2.6-2.1h1.6c1.4 0 2.5-1 2.5-2.5A11.2 11.2 0 0 0 12 3.2Z"/><circle cx="7.6" cy="10" r="1.1"/><circle cx="11.3" cy="7.3" r="1.1"/><circle cx="15.5" cy="8.8" r="1.1"/>',
+  chart: '<path d="M3.5 20.5h17"/><rect x="5" y="12" width="3.2" height="6" rx=".8"/><rect x="10.4" y="8" width="3.2" height="10" rx=".8"/><rect x="15.8" y="4.5" width="3.2" height="13.5" rx=".8"/>',
+  motion: '<path d="M4 8h9M4 12h13M4 16h7"/><path d="m17 4 1.2 2.8L21 8l-2.8 1.2L17 12l-1.2-2.8L13 8l2.8-1.2L17 4Z"/>',
+  archive: '<rect x="3" y="4.5" width="18" height="4.5" rx="1.2"/><path d="M4.5 9v9.5a1.5 1.5 0 0 0 1.5 1.5h12a1.5 1.5 0 0 0 1.5-1.5V9M9.5 13h5"/>',
+  arrow: '<path d="M4 12h15m-6-6 6 6-6 6"/>',
+  arrowLeft: '<path d="M20 12H5m6-6-6 6 6 6"/>',
+  arrowUpRight: '<path d="M7 17 17 7M8 7h9v9"/>',
+  chevron: '<path d="m9 5 7 7-7 7"/>',
+  search: '<circle cx="11" cy="11" r="6.5"/><path d="m16 16 4 4"/>',
+  command: '<path d="M8 4a2.5 2.5 0 1 0 0 5h8a2.5 2.5 0 1 0 0-5v16a2.5 2.5 0 1 0 0-5H8a2.5 2.5 0 1 0 0 5V4Z"/>',
+  sun: '<circle cx="12" cy="12" r="4"/><path d="M12 2.5v2M12 19.5v2M2.5 12h2M19.5 12h2M5.2 5.2l1.4 1.4M17.4 17.4l1.4 1.4M18.8 5.2l-1.4 1.4M6.6 17.4l-1.4 1.4"/>',
+  moon: '<path d="M20 14.5A8.5 8.5 0 0 1 9.5 4a8.5 8.5 0 1 0 10.5 10.5Z"/>',
+  close: '<path d="M6 6l12 12M18 6 6 18"/>',
+  copy: '<rect x="8" y="8" width="12" height="12" rx="2"/><path d="M16 8V5.5A1.5 1.5 0 0 0 14.5 4h-9A1.5 1.5 0 0 0 4 5.5v9A1.5 1.5 0 0 0 5.5 16H8"/>',
+  check: '<path d="m5 12.5 4.5 4.5L19 7"/>',
+  refresh: '<path d="M20 11a8 8 0 1 0-2.3 6.7M20 5v6h-6"/>',
+  play: '<path d="m8 5 11 7-11 7V5Z"/>',
+  pause: '<path d="M8 5v14M16 5v14"/>',
+  download: '<path d="M12 4v11m-4-4 4 4 4-4M5 19h14"/>',
+  trash: '<path d="M4 7h16M9 7V4.5h6V7M6 7l1 13h10l1-13M10 11v5M14 11v5"/>',
+  plus: '<path d="M12 5v14M5 12h14"/>',
+  pin: '<path d="m9 3 6 6-1.5 1.5 3 3-4 1-2.5 6.5-1.5-5.5L3 17l6.5-2.5L8 12l1-3-1.5-1.5L9 3Z"/>',
+  undo: '<path d="M4 9h9a5.5 5.5 0 1 1 0 11H8M4 9l4-4M4 9l4 4"/>',
+  dice: '<rect x="3.5" y="3.5" width="17" height="17" rx="3.5"/><circle cx="8.5" cy="8.5" r="1.1" fill="currentColor"/><circle cx="15.5" cy="8.5" r="1.1" fill="currentColor"/><circle cx="12" cy="12" r="1.1" fill="currentColor"/><circle cx="8.5" cy="15.5" r="1.1" fill="currentColor"/><circle cx="15.5" cy="15.5" r="1.1" fill="currentColor"/>',
+  sparkles: '<path d="m12 3 1.8 4.7L18.5 9.5l-4.7 1.8L12 16l-1.8-4.7L5.5 9.5l4.7-1.8L12 3Z"/><path d="M18.5 15.5 19.4 18l2.5.9-2.5.9-.9 2.5-.9-2.5-2.5-.9 2.5-.9.9-2.5Z"/>',
+  external: '<path d="M14 4h6v6M20 4l-9 9"/><path d="M18 14v4.5a1.5 1.5 0 0 1-1.5 1.5h-11A1.5 1.5 0 0 1 4 18.5v-11A1.5 1.5 0 0 1 5.5 6H10"/>',
+  github: '<path d="M9 19.5c-4 1.2-4-2.2-5.5-2.7m11 5v-3.5c0-1 .1-1.5-.5-2 2.8-.3 5.5-1.4 5.5-6.2a4.8 4.8 0 0 0-1.4-3.3 4.4 4.4 0 0 0-.1-3.4s-1.4-.4-4.5 1.7a12 12 0 0 0-6 0C5.4 3 4 3.4 4 3.4a4.4 4.4 0 0 0-.1 3.4A4.8 4.8 0 0 0 2.5 10c0 4.8 2.7 5.9 5.5 6.2-.4.4-.5.9-.5 1.7V22"/>',
+  clock: '<circle cx="12" cy="12" r="8.5"/><path d="M12 7.5V12l3 2"/>',
+  mail: '<rect x="3" y="5" width="18" height="14" rx="2"/><path d="m4 6.5 8 6 8-6"/>',
+  code: '<path d="m8 8-4 4 4 4M16 8l4 4-4 4M13.5 5l-3 14"/>',
+  layers: '<path d="m12 3 9 5-9 5-9-5 9-5Z"/><path d="m3.5 12.5 8.5 4.7 8.5-4.7M3.5 16.5 12 21l8.5-4.5"/>',
+  globe: '<circle cx="12" cy="12" r="8.5"/><path d="M3.5 12h17M12 3.5c2.4 2.3 3.6 5.1 3.6 8.5S14.4 18.2 12 20.5c-2.4-2.3-3.6-5.1-3.6-8.5S9.6 5.8 12 3.5Z"/>',
+  lock: '<rect x="4.5" y="10" width="15" height="10.5" rx="2"/><path d="M8 10V7.5a4 4 0 0 1 8 0V10M12 14v3"/>',
+  eye: '<path d="M2.5 12S6 5.5 12 5.5 21.5 12 21.5 12 18 18.5 12 18.5 2.5 12 2.5 12Z"/><circle cx="12" cy="12" r="3"/>',
+  map: '<path d="m3 6 6-2.5 6 2.5 6-2.5v14.5L15 20.5 9 18l-6 2.5V6Z"/><path d="M9 3.5v14.5M15 6v14.5"/>',
+  mountain: '<path d="m3 19 6.5-11 4.5 7 2.5-4L21 19H3Z"/><path d="m7.5 12 2 2.5 2.5-2"/>',
+  heart: '<path d="M12 20S4 15 4 9.5A4.5 4.5 0 0 1 12 6a4.5 4.5 0 0 1 8 3.5C20 15 12 20 12 20Z"/>',
+  keyboard: '<rect x="2.5" y="6" width="19" height="12" rx="2"/><path d="M6 10h.01M9.5 10h.01M13 10h.01M16.5 10h.01M6 13.5h.01M9.5 13.5h.01M13 13.5h.01M16.5 13.5h.01M8 16h8"/>',
+  info: '<circle cx="12" cy="12" r="8.5"/><path d="M12 11v5M12 8h.01"/>',
+  warning: '<path d="M12 4 21 20H3L12 4Z"/><path d="M12 10v4.5M12 17.5h.01"/>',
+  lightbulb: '<path d="M9 18h6M10 21h4M12 3a6 6 0 0 0-3.5 10.8c.5.4.8 1 .8 1.7V16h5.4v-.5c0-.7.3-1.3.8-1.7A6 6 0 0 0 12 3Z"/>',
+  magic: '<path d="m4 20 11-11M13 5l1-2 1 2 2 1-2 1-1 2-1-2-2-1 2-1ZM19 12l.7-1.4.7 1.4 1.4.7-1.4.7-.7 1.4-.7-1.4L17.6 12l1.4-.7Z"/>',
+  filter: '<path d="M4 6h16M7 12h10M10 18h4"/>',
+  star: '<path d="m12 3.5 2.6 5.4 5.9.8-4.3 4.2 1 5.9-5.2-2.8-5.2 2.8 1-5.9L3.5 9.7l5.9-.8L12 3.5Z"/>',
+  mouse: '<rect x="7" y="2.5" width="10" height="19" rx="5"/><path d="M12 6.5v4"/>',
+  ruler: '<rect x="2.5" y="8.5" width="19" height="7" rx="1.5" transform="rotate(-8 12 12)"/><path d="M7 9v3M11 8.5v4M15 8v3M19 7.5v3"/>',
+};
+
+export function icon(name: keyof typeof paths | string, cls = ''): string {
+  const body = paths[name] ?? paths.sparkles;
+  return `<svg class="icon ${cls}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.65" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${body}</svg>`;
+}
+
+export const iconNames = Object.keys(paths);
