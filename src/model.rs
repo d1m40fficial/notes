@@ -36,15 +36,24 @@ impl Note {
         }
     }
 
-    pub fn title(&self) -> String {
+    pub fn title_raw(&self) -> String {
         let line = self
             .body
             .lines()
             .find(|line| !line.trim().is_empty())
             .unwrap_or("");
-        let mut title = line.trim().trim_start_matches('#').trim().to_string();
+        let title = line.trim().trim_start_matches('#').trim().to_string();
         if title.is_empty() {
-            return "Без названия".into();
+            "Без названия".into()
+        } else {
+            title
+        }
+    }
+
+    pub fn title(&self) -> String {
+        let mut title = self.title_raw();
+        if title == "Без названия" {
+            return title;
         }
         let limit = 52;
         if title.chars().count() > limit {
@@ -89,16 +98,39 @@ impl Note {
         )
     }
 
+    /// Rename the note by replacing its first non-empty line.
+    /// A leading Markdown heading marker such as `## ` is preserved.
+    pub fn rename(&mut self, title: &str) {
+        let title = title.trim();
+        if title.is_empty() {
+            return;
+        }
+        let mut lines: Vec<String> = self.body.split('\n').map(str::to_string).collect();
+        if let Some(index) = lines.iter().position(|line| !line.trim().is_empty()) {
+            let line = &lines[index];
+            let indent_len = line.len() - line.trim_start().len();
+            let indent = &line[..indent_len];
+            let trimmed = &line[indent_len..];
+            let hashes = trimmed.chars().take_while(|ch| *ch == '#').count();
+            let heading = hashes > 0 && trimmed[hashes..].starts_with(' ');
+            lines[index] = if heading {
+                format!("{indent}{} {title}", "#".repeat(hashes))
+            } else {
+                format!("{indent}{title}")
+            };
+            self.body = lines.join("\n");
+        } else {
+            self.body = title.to_string();
+        }
+        self.updated_at = crate::util::now_ms();
+    }
+
     pub fn list_meta(&self) -> String {
         if self.body.trim().is_empty() {
             format!("{} · пусто", time_ago(self.updated_at))
         } else {
             format!("{} · {}", time_ago(self.updated_at), self.words_label())
         }
-    }
-
-    pub fn pane_meta(&self) -> String {
-        format!("обновлено {}", time_ago(self.updated_at))
     }
 }
 

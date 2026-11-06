@@ -9,6 +9,11 @@ const PATHS: &[(&str, &str)] = &[
         r#"<rect x="3.5" y="4.5" width="17" height="15" rx="2"/><path d="M12 4.5v15"/>"#,
     ),
     ("download", r#"<path d="M12 4v11m-4-4 4 4 4-4M5 19h14"/>"#),
+    ("upload", r#"<path d="M12 20V9m-4 4 4-4 4 4M5 4h14"/>"#),
+    (
+        "rename",
+        r#"<path d="M4 20h4L18.5 9.5a2.12 2.12 0 0 0-3-3L5 17v3Z"/><path d="m12.5 7.5 3 3"/>"#,
+    ),
     (
         "trash",
         r#"<path d="M4.5 7h15M9 7V4.5h6V7M6.5 7l1 12.5h9l1-12.5M10 11v5M14 11v5"/>"#,
@@ -21,7 +26,6 @@ const PATHS: &[(&str, &str)] = &[
         "moon",
         r#"<path d="M20 14.5A8.5 8.5 0 0 1 9.5 4a8.5 8.5 0 1 0 10.5 10.5Z"/>"#,
     ),
-    ("close", r#"<path d="M6 6l12 12M18 6 6 18"/>"#),
     (
         "notes",
         r#"<path d="M6 3.5h9.5L19 7v13.5H6z"/><path d="M15 3.5V7h4M9 11h7M9 14.5h7M9 18h4"/>"#,

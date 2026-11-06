@@ -5,8 +5,8 @@ use wasm_bindgen::closure::Closure;
 use wasm_bindgen::prelude::*;
 use wasm_bindgen::JsCast;
 use web_sys::{
-    Blob, BlobPropertyBag, Document, Element, Event, HtmlAnchorElement, HtmlElement,
-    HtmlTextAreaElement, KeyboardEvent, Window,
+    Blob, BlobPropertyBag, Document, Element, Event, FileReader, HtmlAnchorElement, HtmlElement,
+    HtmlInputElement, HtmlTextAreaElement, KeyboardEvent, Window,
 };
 
 use crate::icons::icon;
@@ -99,6 +99,9 @@ fn skeleton() -> String {
         <button class="action" id="split-toggle" type="button" data-act="split" aria-pressed="false" title="Разделить экран (Ctrl+Alt+2)">
           {split}<span class="action__label">две</span>
         </button>
+        <button class="action" type="button" data-act="import" title="Импортировать .md">
+          {upload}<span class="action__label">import</span>
+        </button>
         <button class="action" type="button" data-act="export" title="Скачать .md (Ctrl+S)">
           {download}<span class="action__label">export</span>
         </button>
@@ -108,13 +111,10 @@ fn skeleton() -> String {
       </nav>
     </header>
 
+    <input class="file-input" id="import-file" type="file" accept=".md,.markdown,text/markdown,text/plain" hidden>
+
     <div class="panes" id="panes" data-split="off">
       <section class="pane pane--first is-active" data-pane="0" aria-label="Заметка 1">
-        <header class="pane__head">
-          <span class="pane__index" aria-hidden="true">1</span>
-          <span class="pane__title" id="pane-title-0">Без названия</span>
-          <span class="pane__meta" id="pane-meta-0"></span>
-        </header>
         <div class="pane__paper">
           <label class="sr-only" for="editor-0">Заметка 1</label>
           <textarea class="editor" id="editor-0" data-editor="0" spellcheck="true" autocomplete="off" placeholder="Начните печатать. Всё сохраняется в этом браузере."></textarea>
@@ -126,12 +126,6 @@ fn skeleton() -> String {
       </section>
 
       <section class="pane pane--second" data-pane="1" aria-label="Заметка 2" aria-hidden="true">
-        <header class="pane__head">
-          <span class="pane__index" aria-hidden="true">2</span>
-          <span class="pane__title" id="pane-title-1">Вторая заметка</span>
-          <span class="pane__meta" id="pane-meta-1"></span>
-          <button class="pane__close" id="pane-close" type="button" data-act="pane-close" title="Закрыть вторую заметку" aria-label="Закрыть вторую заметку" hidden>{close}</button>
-        </header>
         <div class="pane__paper">
           <label class="sr-only" for="editor-1">Заметка 2</label>
           <textarea class="editor" id="editor-1" data-editor="1" spellcheck="true" autocomplete="off" placeholder="Вторая заметка. Она сохраняется отдельно."></textarea>
@@ -148,9 +142,9 @@ fn skeleton() -> String {
         panel = icon("panel", ""),
         moon = icon("moon", ""),
         split = icon("split", ""),
+        upload = icon("upload", ""),
         download = icon("download", ""),
         trash = icon("trash", ""),
-        close = icon("close", ""),
     )
 }
 
@@ -167,12 +161,11 @@ struct App {
     split_button: Element,
     sidebar_button: Element,
     theme_button: Element,
-    pane_close: Element,
     panes_container: Element,
+    import_input: HtmlInputElement,
+    import_reader: RefCell<Option<FileReader>>,
     panes: Vec<Element>,
     editors: Vec<HtmlTextAreaElement>,
-    pane_titles: Vec<Element>,
-    pane_metas: Vec<Element>,
     pane_counts: Vec<Element>,
     state: RefCell<State>,
     theme: Cell<Theme>,
@@ -199,8 +192,8 @@ impl App {
         let split_button = query_el(&root, "#split-toggle");
         let sidebar_button = query_el(&root, "#sidebar-toggle");
         let theme_button = query_el(&root, "#theme-toggle");
-        let pane_close = query_el(&root, "#pane-close");
         let panes_container = query_el(&root, "#panes");
+        let import_input = query_typed::<HtmlInputElement>(&root, "#import-file");
 
         let panes = vec![
             query_el(&root, ".pane[data-pane=\"0\"]"),
@@ -209,14 +202,6 @@ impl App {
         let editors = vec![
             query_typed::<HtmlTextAreaElement>(&root, "#editor-0"),
             query_typed::<HtmlTextAreaElement>(&root, "#editor-1"),
-        ];
-        let pane_titles = vec![
-            query_el(&root, "#pane-title-0"),
-            query_el(&root, "#pane-title-1"),
-        ];
-        let pane_metas = vec![
-            query_el(&root, "#pane-meta-0"),
-            query_el(&root, "#pane-meta-1"),
         ];
         let pane_counts = vec![query_el(&root, "#counts-0"), query_el(&root, "#counts-1")];
 
@@ -233,12 +218,11 @@ impl App {
             split_button,
             sidebar_button,
             theme_button,
-            pane_close,
             panes_container,
+            import_input,
+            import_reader: RefCell::new(None),
             panes,
             editors,
-            pane_titles,
-            pane_metas,
             pane_counts,
             state: RefCell::new(state),
             theme: Cell::new(theme),
@@ -281,6 +265,22 @@ impl App {
         self.root
             .add_event_listener_with_callback("focusin", focus.as_ref().unchecked_ref())?;
         self.closures.borrow_mut().push(focus);
+
+        let blur_this = Rc::clone(&this);
+        let blur = Closure::<dyn FnMut(Event)>::new(move |event: Event| {
+            blur_this.on_focus_out(event);
+        });
+        self.root
+            .add_event_listener_with_callback("focusout", blur.as_ref().unchecked_ref())?;
+        self.closures.borrow_mut().push(blur);
+
+        let import_this = Rc::clone(&this);
+        let import = Closure::<dyn FnMut(Event)>::new(move |event: Event| {
+            import_this.on_import_change(event);
+        });
+        self.import_input
+            .add_event_listener_with_callback("change", import.as_ref().unchecked_ref())?;
+        self.closures.borrow_mut().push(import);
 
         let key_this = Rc::clone(&this);
         let key = Closure::<dyn FnMut(Event)>::new(move |event: Event| {
@@ -333,10 +333,10 @@ impl App {
             "sidebar-close" => self.set_sidebar(false, true),
             "theme" => self.toggle_theme(),
             "split" => self.toggle_split(),
+            "import" => self.open_import_dialog(),
             "export" => self.export_active(),
             "clear" => self.clear_active(),
-            "pane-close" => self.close_split(),
-            "note-open" | "note-split" | "note-delete" => {
+            "note-open" | "note-split" | "note-delete" | "note-rename" => {
                 let Some(item) = target.closest(".note-item").ok().flatten() else {
                     return;
                 };
@@ -346,6 +346,7 @@ impl App {
                 match action.as_str() {
                     "note-open" => self.open_note(&id, None, true),
                     "note-split" => self.split_note(&id),
+                    "note-rename" => self.begin_rename(&id),
                     "note-delete" => self.delete_note(&id),
                     _ => {}
                 }
@@ -392,12 +393,39 @@ impl App {
         self.activate_pane(pane);
     }
 
-    fn on_key_down(&self, event: Event) {
-        let target_editor = event
+    fn on_focus_out(&self, event: Event) {
+        let Some(target) = event
             .target()
             .and_then(|target| target.dyn_into::<Element>().ok())
+        else {
+            return;
+        };
+        let Some(input_el) = target.closest(".note-item__rename").ok().flatten() else {
+            return;
+        };
+        if input_el.closest("#note-list").ok().flatten().is_none() {
+            return;
+        }
+        if let Ok(input) = input_el.dyn_into::<HtmlInputElement>() {
+            self.commit_rename(&input);
+        }
+    }
+
+    fn on_key_down(&self, event: Event) {
+        let target = event
+            .target()
+            .and_then(|target| target.dyn_into::<Element>().ok());
+        let target_editor = target
+            .as_ref()
             .and_then(|el| el.closest("[data-editor]").ok().flatten())
             .and_then(|el| el.dyn_into::<HtmlTextAreaElement>().ok());
+        let rename_input = target
+            .as_ref()
+            .and_then(|el| el.closest(".note-item__rename").ok().flatten())
+            .and_then(|el| el.dyn_into::<HtmlInputElement>().ok());
+        let note_item = target
+            .as_ref()
+            .and_then(|el| el.closest(".note-item").ok().flatten());
 
         let Ok(key_event) = event.dyn_into::<KeyboardEvent>() else {
             return;
@@ -406,6 +434,29 @@ impl App {
         let modifier = key_event.ctrl_key() || key_event.meta_key();
         let code = key_event.code();
         let key = key_event.key();
+
+        if let Some(input) = rename_input.as_ref() {
+            if key == "Enter" {
+                key_event.prevent_default();
+                self.commit_rename(input);
+                return;
+            }
+            if key == "Escape" {
+                key_event.prevent_default();
+                self.cancel_rename(input);
+                return;
+            }
+        }
+
+        if key == "F2" && rename_input.is_none() {
+            if let Some(item) = note_item.as_ref() {
+                if let Some(id) = item.get_attribute("data-id") {
+                    key_event.prevent_default();
+                    self.begin_rename(&id);
+                }
+            }
+            return;
+        }
 
         if modifier && code == "KeyS" && !key_event.repeat() {
             key_event.prevent_default();
@@ -506,20 +557,12 @@ impl App {
             (
                 note.id.clone(),
                 note.title(),
-                note.pane_meta(),
                 note.counts_label(),
                 note.list_meta(),
             )
         };
 
-        let (id, title, pane_meta, counts, list_meta) = info;
-        if let Some(node) = self.pane_titles.get(pane) {
-            node.set_text_content(Some(&title));
-            let _ = node.set_attribute("title", &title);
-        }
-        if let Some(node) = self.pane_metas.get(pane) {
-            node.set_text_content(Some(&pane_meta));
-        }
+        let (id, title, counts, list_meta) = info;
         if let Some(node) = self.pane_counts.get(pane) {
             node.set_text_content(Some(&counts));
         }
@@ -644,6 +687,104 @@ impl App {
         self.focus_if_wide();
     }
 
+    fn open_import_dialog(&self) {
+        if self.import_reader.borrow().is_some() {
+            return;
+        }
+        self.import_input.set_value("");
+        let _ = self.import_input.click();
+    }
+
+    fn on_import_change(&self, _event: Event) {
+        if self.import_reader.borrow().is_some() {
+            return;
+        }
+        let Some(file) = self.import_input.files().and_then(|files| files.get(0)) else {
+            return;
+        };
+        let filename = file.name();
+        let Ok(reader) = FileReader::new() else {
+            self.set_status("ошибка импорта", "is-error");
+            return;
+        };
+        let Some(this) = self.self_ref.borrow().clone().upgrade() else {
+            return;
+        };
+
+        let load_reader = reader.clone();
+        let load_this = Rc::clone(&this);
+        let load_name = filename.clone();
+        let onload = Closure::once_into_js(move || {
+            let text = load_reader
+                .result()
+                .ok()
+                .and_then(|value| value.as_string());
+            load_this.finish_import(&load_name, text);
+        });
+        reader.set_onload(Some(onload.unchecked_ref::<js_sys::Function>()));
+
+        let error_this = Rc::clone(&this);
+        let onerror = Closure::once_into_js(move || {
+            error_this.finish_import("", None);
+        });
+        reader.set_onerror(Some(onerror.unchecked_ref::<js_sys::Function>()));
+
+        self.import_reader.borrow_mut().replace(reader.clone());
+        self.set_status("импортирую…", "is-saving");
+        if reader.read_as_text(&file).is_err() {
+            self.import_reader.borrow_mut().take();
+            self.set_status("ошибка импорта", "is-error");
+            return;
+        }
+        self.import_input.set_value("");
+    }
+
+    fn finish_import(&self, filename: &str, text: Option<String>) {
+        self.import_reader.borrow_mut().take();
+        self.import_input.set_value("");
+        let Some(raw) = text else {
+            self.set_status("ошибка импорта", "is-error");
+            return;
+        };
+        let body = raw.strip_prefix('\u{feff}').unwrap_or(&raw).to_string();
+        self.clear_timeout(&self.save_timer);
+
+        let saved = {
+            let mut state = self.state.borrow_mut();
+            let note = Note::from_body(body);
+            let id = note.id.clone();
+            state.notes.insert(0, note);
+            let pane = if state.session.split {
+                state.session.active_pane.min(1)
+            } else {
+                0
+            };
+            if pane == 1 {
+                state.session.secondary = Some(id);
+            } else {
+                state.session.active = Some(id);
+            }
+            normalize(&mut state);
+            storage::write_state(&state).is_ok()
+        };
+
+        self.render_all();
+        let _ = self.list.set_scroll_top(0);
+        if self.is_narrow() {
+            self.set_sidebar(false, false);
+        }
+        self.focus_if_wide();
+        if saved {
+            self.flash(
+                &format!("импортировано: {}", short_filename(filename)),
+                "is-saved",
+                2200,
+            );
+        } else {
+            self.set_status("ошибка", "is-error");
+        }
+    }
+
     fn open_note(&self, id: &str, pane: Option<usize>, focus: bool) {
         let target_pane = {
             let state = self.state.borrow();
@@ -750,6 +891,105 @@ impl App {
         }
         self.render_all();
         self.focus_if_wide();
+    }
+
+    fn begin_rename(&self, id: &str) {
+        let title = {
+            let state = self.state.borrow();
+            match state.notes.iter().find(|note| note.id == id) {
+                Some(note) => note.title_raw(),
+                None => return,
+            }
+        };
+        let selector = format!(".note-item[data-id=\"{id}\"]");
+        let Ok(Some(item)) = self.list.query_selector(&selector) else {
+            return;
+        };
+        if item
+            .query_selector(".note-item__rename")
+            .ok()
+            .flatten()
+            .is_some()
+        {
+            return;
+        }
+
+        set_class(&item, "is-renaming", true);
+        item.set_inner_html("");
+        let Ok(input) = self.el("input").dyn_into::<HtmlInputElement>() else {
+            return;
+        };
+        input.set_class_name("note-item__rename");
+        let _ = input.set_attribute("type", "text");
+        let _ = input.set_attribute("data-rename-id", id);
+        let _ = input.set_attribute("aria-label", "Название заметки");
+        let _ = input.set_attribute("autocomplete", "off");
+        let _ = input.set_attribute("spellcheck", "false");
+        input.set_value(&title);
+        let _ = item.append_child(&input);
+        let _ = input.focus();
+        let _ = input.select();
+    }
+
+    fn commit_rename(&self, input: &HtmlInputElement) {
+        if input.has_attribute("data-rename-done") {
+            return;
+        }
+        let _ = input.set_attribute("data-rename-done", "1");
+        let id = input.get_attribute("data-rename-id").unwrap_or_default();
+        if id.is_empty() {
+            return;
+        }
+        let title = input.value();
+        let title = title.trim();
+        let changed = if title.is_empty() {
+            false
+        } else {
+            let mut state = self.state.borrow_mut();
+            match state.notes.iter_mut().find(|note| note.id == id) {
+                Some(note) => {
+                    if note.title_raw() == title {
+                        false
+                    } else {
+                        note.rename(title);
+                        true
+                    }
+                }
+                None => false,
+            }
+        };
+        if changed {
+            self.save_now();
+        }
+        self.refresh_note_item(&id);
+    }
+
+    fn cancel_rename(&self, input: &HtmlInputElement) {
+        if input.has_attribute("data-rename-done") {
+            return;
+        }
+        let _ = input.set_attribute("data-rename-done", "1");
+        if let Some(id) = input.get_attribute("data-rename-id") {
+            self.refresh_note_item(&id);
+        }
+    }
+
+    fn refresh_note_item(&self, id: &str) {
+        let item = {
+            let state = self.state.borrow();
+            let Some(note) = state.notes.iter().find(|note| note.id == id) else {
+                return;
+            };
+            self.build_note_item(note, &state.session)
+        };
+        let selector = format!(".note-item[data-id=\"{id}\"]");
+        if let Ok(Some(old)) = self.list.query_selector(&selector) {
+            if let Some(parent) = old.parent_element() {
+                let _ = parent.replace_child(&item, &old);
+            }
+        }
+        self.render_panes();
+        self.update_document_title();
     }
 
     fn delete_note(&self, id: &str) {
@@ -1109,14 +1349,6 @@ impl App {
                 .as_deref()
                 .and_then(|id| state.notes.iter().find(|note| note.id == id));
             if let Some(note) = note {
-                let title = note.title();
-                if let Some(node) = self.pane_titles.get(pane) {
-                    node.set_text_content(Some(&title));
-                    let _ = node.set_attribute("title", &title);
-                }
-                if let Some(node) = self.pane_metas.get(pane) {
-                    node.set_text_content(Some(&note.pane_meta()));
-                }
                 if let Some(node) = self.pane_counts.get(pane) {
                     node.set_text_content(Some(&note.counts_label()));
                 }
@@ -1126,12 +1358,6 @@ impl App {
                     }
                 }
             } else {
-                if let Some(node) = self.pane_titles.get(pane) {
-                    node.set_text_content(Some("—"));
-                }
-                if let Some(node) = self.pane_metas.get(pane) {
-                    node.set_text_content(Some(""));
-                }
                 if let Some(node) = self.pane_counts.get(pane) {
                     node.set_text_content(Some(""));
                 }
@@ -1150,12 +1376,6 @@ impl App {
                 "aria-hidden",
                 if split || pane == 0 { "false" } else { "true" },
             );
-        }
-
-        if split {
-            let _ = self.pane_close.remove_attribute("hidden");
-        } else {
-            let _ = self.pane_close.set_attribute("hidden", "");
         }
     }
 
@@ -1255,12 +1475,14 @@ impl App {
 
         let acts = self.el("div");
         acts.set_class_name("note-item__acts");
+        let rename_button = self.icon_button("note-rename", "rename", "Переименовать заметку");
         let split_button = self.icon_button(
             "note-split",
             "split",
             "Открыть во второй половине (разделить экран)",
         );
         let delete_button = self.icon_button("note-delete", "trash", "Удалить заметку");
+        let _ = acts.append_child(&rename_button);
         let _ = acts.append_child(&split_button);
         let _ = acts.append_child(&delete_button);
         let _ = item.append_child(&acts);
@@ -1398,4 +1620,16 @@ fn export_filename(title: &str) -> String {
     } else {
         format!("plain-{date}-{slug}.md")
     }
+}
+
+fn short_filename(filename: &str) -> String {
+    let name = filename.trim();
+    if name.is_empty() {
+        return "заметка".into();
+    }
+    let mut short: String = name.chars().take(32).collect();
+    if name.chars().count() > 32 {
+        short.push('…');
+    }
+    short
 }
