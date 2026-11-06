@@ -11,6 +11,7 @@ Rust · WebAssembly · без облака и аккаунтов.
 [![WebAssembly](https://img.shields.io/badge/WebAssembly-wasm-654ff0?style=flat-square&logo=webassembly&logoColor=white)](https://webassembly.org/)
 [![Trunk](https://img.shields.io/badge/build-Trunk-171614?style=flat-square)](https://trunkrs.dev/)
 [![MIT](https://img.shields.io/badge/license-MIT-8a857c?style=flat-square)](LICENSE)
+[![Pages](https://img.shields.io/badge/GitHub%20Pages-live-c4552d?style=flat-square&logo=github&logoColor=white)](https://d1m40fficial.github.io/notes/)
 
 [Возможности](#возможности) · [Скриншоты](#скриншоты) · [Запуск](#запуск) · [Архитектура](#архитектура) · [Клавиши](#клавиши)
 
@@ -66,6 +67,8 @@ Rust · WebAssembly · без облака и аккаунтов.
 <p align="center"><sub>Редактор и overlay-список на экране 390 px</sub></p>
 
 ## Запуск
+
+Живая версия: [**d1m40fficial.github.io/notes**](https://d1m40fficial.github.io/notes/).
 
 Нужны [Rust](https://rustup.rs/) (stable) и [Trunk](https://trunkrs.dev/).
 
