@@ -171,6 +171,10 @@ struct App {
     theme: Cell<Theme>,
     save_timer: Cell<Option<i32>>,
     status_timer: Cell<Option<i32>>,
+    save_due_at: Cell<f64>,
+    status_due_at: Cell<f64>,
+    save_callback: RefCell<Option<Closure<dyn FnMut()>>>,
+    status_callback: RefCell<Option<Closure<dyn FnMut()>>>,
     self_ref: RefCell<Weak<App>>,
     closures: RefCell<Vec<Closure<dyn FnMut(Event)>>>,
 }
@@ -228,6 +232,10 @@ impl App {
             theme: Cell::new(theme),
             save_timer: Cell::new(None),
             status_timer: Cell::new(None),
+            save_due_at: Cell::new(0.0),
+            status_due_at: Cell::new(0.0),
+            save_callback: RefCell::new(None),
+            status_callback: RefCell::new(None),
             self_ref: RefCell::new(Weak::new()),
             closures: RefCell::new(Vec::new()),
         });
@@ -241,6 +249,22 @@ impl App {
             .borrow()
             .upgrade()
             .ok_or_else(|| JsValue::from_str("app"))?;
+
+        let save_weak = Rc::downgrade(&this);
+        let save_callback = Closure::<dyn FnMut()>::new(move || {
+            if let Some(app) = save_weak.upgrade() {
+                app.on_save_timer();
+            }
+        });
+        self.save_callback.borrow_mut().replace(save_callback);
+
+        let status_weak = Rc::downgrade(&this);
+        let status_callback = Closure::<dyn FnMut()>::new(move || {
+            if let Some(app) = status_weak.upgrade() {
+                app.on_status_timer();
+            }
+        });
+        self.status_callback.borrow_mut().replace(status_callback);
 
         let click_this = Rc::clone(&this);
         let click = Closure::<dyn FnMut(Event)>::new(move |event: Event| {
@@ -281,6 +305,16 @@ impl App {
         self.import_input
             .add_event_listener_with_callback("change", import.as_ref().unchecked_ref())?;
         self.closures.borrow_mut().push(import);
+
+        // The hidden input is clicked from the toolbar button, inside the
+        // delegated root click handler. Stop that synthetic click from
+        // bubbling back into the same wasm-bindgen closure.
+        let input_click = Closure::<dyn FnMut(Event)>::new(|event: Event| {
+            event.stop_propagation();
+        });
+        self.import_input
+            .add_event_listener_with_callback("click", input_click.as_ref().unchecked_ref())?;
+        self.closures.borrow_mut().push(input_click);
 
         let key_this = Rc::clone(&this);
         let key = Closure::<dyn FnMut(Event)>::new(move |event: Event| {
@@ -574,17 +608,15 @@ impl App {
 
     fn schedule_save(&self) {
         self.clear_timeout(&self.save_timer);
-        let weak = self.self_ref.borrow().clone();
-        let Some(this) = weak.upgrade() else {
+        self.save_due_at.set(self.now() + f64::from(SAVE_DELAY_MS));
+        let callbacks = self.save_callback.borrow();
+        let Some(callback) = callbacks.as_ref() else {
             return;
         };
-        let callback = Closure::once_into_js(move || {
-            this.save_now();
-        });
         match self
             .window
             .set_timeout_with_callback_and_timeout_and_arguments_0(
-                callback.unchecked_ref::<js_sys::Function>(),
+                callback.as_ref().unchecked_ref(),
                 SAVE_DELAY_MS,
             ) {
             Ok(handle) => self.save_timer.set(Some(handle)),
@@ -592,8 +624,19 @@ impl App {
         }
     }
 
+    fn on_save_timer(&self) {
+        self.save_timer.set(None);
+        let due = self.save_due_at.get();
+        if due <= 0.0 || self.now() < due {
+            return;
+        }
+        self.save_due_at.set(0.0);
+        self.save_now();
+    }
+
     fn save_now(&self) {
         self.clear_timeout(&self.save_timer);
+        self.save_due_at.set(0.0);
         let result = {
             let state = self.state.borrow();
             storage::write_state(&state)
@@ -624,18 +667,15 @@ impl App {
 
     fn flash(&self, text: &str, class: &str, ms: i32) {
         self.set_status(text, class);
-        self.clear_timeout(&self.status_timer);
-        let weak = self.self_ref.borrow().clone();
-        let Some(this) = weak.upgrade() else {
+        self.status_due_at.set(self.now() + f64::from(ms));
+        let callbacks = self.status_callback.borrow();
+        let Some(callback) = callbacks.as_ref() else {
             return;
         };
-        let callback = Closure::once_into_js(move || {
-            this.set_status("локально", "");
-        });
         match self
             .window
             .set_timeout_with_callback_and_timeout_and_arguments_0(
-                callback.unchecked_ref::<js_sys::Function>(),
+                callback.as_ref().unchecked_ref(),
                 ms,
             ) {
             Ok(handle) => self.status_timer.set(Some(handle)),
@@ -643,8 +683,19 @@ impl App {
         }
     }
 
+    fn on_status_timer(&self) {
+        self.status_timer.set(None);
+        let due = self.status_due_at.get();
+        if due <= 0.0 || self.now() < due {
+            return;
+        }
+        self.status_due_at.set(0.0);
+        self.set_status("локально", "");
+    }
+
     fn set_status(&self, text: &str, class: &str) {
         self.clear_timeout(&self.status_timer);
+        self.status_due_at.set(0.0);
         self.save_state.set_text_content(Some(text));
         for name in ["is-saving", "is-saved", "is-error"] {
             set_class(&self.save_state, name, false);
@@ -755,6 +806,7 @@ impl App {
         };
         let body = raw.strip_prefix('\u{feff}').unwrap_or(&raw).to_string();
         self.clear_timeout(&self.save_timer);
+        self.save_due_at.set(0.0);
 
         let saved = {
             let mut state = self.state.borrow_mut();
