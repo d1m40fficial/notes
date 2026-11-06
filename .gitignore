@@ -1,5 +1,5 @@
-﻿node_modules/
-dist/
-.vite/
+/target
+/dist
+.trunk-lock
 *.local
 .DS_Store

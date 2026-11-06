@@ -1,6 +1,7 @@
 MIT License
 
 Copyright (c) 2026 d1m40fficial
+Copyright (c) 2026 plain-rust contributors
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal
@@ -22,10 +23,5 @@ SOFTWARE.
 
 ---
 
-The MIT license above applies to the original web/lab code and design.
-
-Legacy projects in `public/legacy` and `legacy-src` were written before this
-showcase and are included for demonstration. Raft Survival is a non-commercial
-fan work — see `public/legacy/raft/CREDITS.txt`. Third-party names, data and
-services (Open-Meteo, IMDb/Goodreads-style ratings, star catalogues) remain the
-property of their respective owners.
+Rust/WASM rewrite based on "plain" by d1m40fficial:
+https://github.com/d1m40fficial/notes

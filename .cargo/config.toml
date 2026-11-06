@@ -1,0 +1,4 @@
+# Fallback for Windows GNU toolchains that ship rust-lld but no MSVC linker.
+# Default MSVC builds ignore this section.
+[target.x86_64-pc-windows-gnu]
+linker = "rust-lld"

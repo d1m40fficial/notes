@@ -5,20 +5,38 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta name="theme-color" content="#fbfaf7" />
     <title>plain — заметки</title>
-    <meta name="description" content="Одна страница, автосохранение, экспорт. Блокнот без интерфейса." />
+    <meta
+      name="description"
+      content="Несколько заметок, автосохранение, экспорт. Блокнот без облака и аккаунтов."
+    />
     <meta property="og:title" content="plain — заметки" />
-    <meta property="og:description" content="Одна страница, автосохранение, экспорт." />
+    <meta property="og:description" content="Несколько заметок, автосохранение, экспорт." />
     <meta property="og:type" content="website" />
+    <link
+      rel="icon"
+      href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%23fbfaf7'/%3E%3Ctext x='14' y='45' font-family='monospace' font-size='36' fill='%23171614'%3Ep%3Ctspan fill='%23c4552d'%3E.%3C/tspan%3E%3C/text%3E%3C/svg%3E"
+    />
     <script>
       try {
         const t = localStorage.getItem('plain.theme.v1');
         if (t === 'dark' || t === 'light') document.documentElement.dataset.theme = t;
       } catch (e) {}
     </script>
-    <script type="module" crossorigin src="/notes/assets/index-CgHPHa8i.js"></script>
-    <link rel="stylesheet" crossorigin href="/notes/assets/index-CWXG2fvg.css">
-  </head>
+    <link rel="stylesheet" href="/notes/styles.css" integrity="sha384-u2Mj5rlVbdK6esZOdXlqF9Xbudo8vLOyw59htHYSsutbZcqWyMEz6I3Ic2PHYH7W"/>
+    
+<script type="module">
+import init, * as bindings from '/notes/plain.js';
+const wasm = await init({ module_or_path: '/notes/plain_bg.wasm' });
+
+
+window.wasmBindings = bindings;
+
+
+dispatchEvent(new CustomEvent("TrunkApplicationStarted", {detail: {wasm}}));
+
+</script>
+  <link rel="modulepreload" href="/notes/plain.js" crossorigin="anonymous" integrity="sha384-qlh1f9yQhZYLleYOQPz+rB+n74KBtb5QpMWPFKtw4ICOW2Q6RGMCz49ih+59tVa6"><link rel="preload" href="/notes/plain_bg.wasm" crossorigin="anonymous" integrity="sha384-MmxdE76dffAVSfN3sMAj/T05r4YrHfVHROMiTXKCkypy40MyHpvBk49p/wFXDgJd" as="fetch" type="application/wasm"></head>
   <body>
-    <main id="app"></main>
+    <main id="app"><div class="boot">p<span>.</span></div></main>
   </body>
 </html>

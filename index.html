@@ -5,19 +5,27 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta name="theme-color" content="#fbfaf7" />
     <title>plain — заметки</title>
-    <meta name="description" content="Одна страница, автосохранение, экспорт. Блокнот без интерфейса." />
+    <meta
+      name="description"
+      content="Несколько заметок, автосохранение, экспорт. Блокнот без облака и аккаунтов."
+    />
     <meta property="og:title" content="plain — заметки" />
-    <meta property="og:description" content="Одна страница, автосохранение, экспорт." />
+    <meta property="og:description" content="Несколько заметок, автосохранение, экспорт." />
     <meta property="og:type" content="website" />
+    <link
+      rel="icon"
+      href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%23fbfaf7'/%3E%3Ctext x='14' y='45' font-family='monospace' font-size='36' fill='%23171614'%3Ep%3Ctspan fill='%23c4552d'%3E.%3C/tspan%3E%3C/text%3E%3C/svg%3E"
+    />
     <script>
       try {
         const t = localStorage.getItem('plain.theme.v1');
         if (t === 'dark' || t === 'light') document.documentElement.dataset.theme = t;
       } catch (e) {}
     </script>
+    <link data-trunk rel="css" href="styles.css" />
+    <link data-trunk rel="rust" />
   </head>
   <body>
-    <main id="app"></main>
-    <script type="module" src="/src/main.ts"></script>
+    <main id="app"><div class="boot">p<span>.</span></div></main>
   </body>
 </html>

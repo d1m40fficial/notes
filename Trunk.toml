@@ -1,0 +1,9 @@
+[build]
+dist = "dist"
+target = "index.html"
+filehash = false
+
+[serve]
+addresses = ["127.0.0.1"]
+port = 5184
+open = false
