@@ -707,27 +707,31 @@ impl App {
             self.set_status("ошибка импорта", "is-error");
             return;
         };
-        let Some(this) = self.self_ref.borrow().clone().upgrade() else {
-            return;
-        };
+        let weak = self.self_ref.borrow().clone();
 
         let load_reader = reader.clone();
-        let load_this = Rc::clone(&this);
         let load_name = filename.clone();
-        let onload = Closure::once_into_js(move || {
+        let load_weak = weak.clone();
+        let onload = Closure::<dyn FnMut(Event)>::new(move |_event: Event| {
             let text = load_reader
                 .result()
                 .ok()
                 .and_then(|value| value.as_string());
-            load_this.finish_import(&load_name, text);
+            if let Some(this) = load_weak.upgrade() {
+                this.finish_import(&load_name, text);
+            }
         });
-        reader.set_onload(Some(onload.unchecked_ref::<js_sys::Function>()));
+        reader.set_onload(Some(onload.as_ref().unchecked_ref()));
+        self.closures.borrow_mut().push(onload);
 
-        let error_this = Rc::clone(&this);
-        let onerror = Closure::once_into_js(move || {
-            error_this.finish_import("", None);
+        let error_weak = weak;
+        let onerror = Closure::<dyn FnMut(Event)>::new(move |_event: Event| {
+            if let Some(this) = error_weak.upgrade() {
+                this.finish_import("", None);
+            }
         });
-        reader.set_onerror(Some(onerror.unchecked_ref::<js_sys::Function>()));
+        reader.set_onerror(Some(onerror.as_ref().unchecked_ref()));
+        self.closures.borrow_mut().push(onerror);
 
         self.import_reader.borrow_mut().replace(reader.clone());
         self.set_status("импортирую…", "is-saving");
@@ -740,6 +744,9 @@ impl App {
     }
 
     fn finish_import(&self, filename: &str, text: Option<String>) {
+        if self.import_reader.borrow().is_none() {
+            return;
+        }
         self.import_reader.borrow_mut().take();
         self.import_input.set_value("");
         let Some(raw) = text else {
