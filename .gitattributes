@@ -1,0 +1,7 @@
+# Trunk встраивает SRI-хеши в docs/index.html, поэтому байты файлов
+# должны совпадать с тем, что лежит в git. Держим LF во всех текстовых файлах.
+* text=auto eol=lf
+*.wasm binary
+*.png binary
+*.jpg binary
+*.ico binary
