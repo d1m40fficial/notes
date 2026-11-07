@@ -13,6 +13,7 @@ use crate::icons::icon;
 use crate::model::{normalize, Note, Session, State, Theme, SAVE_DELAY_MS};
 use crate::storage;
 use crate::util::{self, plural};
+use crate::{edit, markdown};
 
 const MOBILE_BREAKPOINT: f64 = 780.0;
 
@@ -66,7 +67,7 @@ fn set_theme(document: &Document, theme: Theme) {
 
 fn skeleton() -> String {
     format!(
-        r##"<div class="app" id="shell" data-sidebar="open" data-split="off">
+        r##"<div class="app" id="shell" data-sidebar="open" data-split="off" data-preview="off">
   <aside class="rail" aria-label="Быстрые действия">
     <span class="rail__brand" aria-hidden="true">p<span>.</span></span>
     <button class="rail__btn rail__btn--new" type="button" data-act="new" title="Новая заметка (Ctrl+Alt+N)" aria-label="Новая заметка">{plus}</button>
@@ -96,6 +97,9 @@ fn skeleton() -> String {
       <span class="wordmark">plain<span>.</span></span>
       <span class="save-state" id="save-state" aria-live="polite">локально</span>
       <nav class="topbar__actions" aria-label="Действия">
+        <button class="action" id="preview-toggle" type="button" data-act="preview" aria-pressed="false" title="Показать markdown-просмотр">
+          {eye}<span class="action__label">md</span>
+        </button>
         <button class="action" id="split-toggle" type="button" data-act="split" aria-pressed="false" title="Разделить экран (Ctrl+Alt+2)">
           {split}<span class="action__label">две</span>
         </button>
@@ -118,6 +122,7 @@ fn skeleton() -> String {
         <div class="pane__paper">
           <label class="sr-only" for="editor-0">Заметка 1</label>
           <textarea class="editor" id="editor-0" data-editor="0" spellcheck="true" autocomplete="off" placeholder="Начните печатать. Всё сохраняется в этом браузере."></textarea>
+          <article class="preview" id="preview-0" data-preview="0" aria-hidden="true"></article>
         </div>
         <footer class="pane__foot">
           <span id="counts-0">0 слов · 0 символов · 0 мин</span>
@@ -129,6 +134,7 @@ fn skeleton() -> String {
         <div class="pane__paper">
           <label class="sr-only" for="editor-1">Заметка 2</label>
           <textarea class="editor" id="editor-1" data-editor="1" spellcheck="true" autocomplete="off" placeholder="Вторая заметка. Она сохраняется отдельно."></textarea>
+          <article class="preview" id="preview-1" data-preview="1" aria-hidden="true"></article>
         </div>
         <footer class="pane__foot">
           <span id="counts-1">0 слов · 0 символов · 0 мин</span>
@@ -141,6 +147,7 @@ fn skeleton() -> String {
         plus = icon("plus", "icon--lg"),
         panel = icon("panel", ""),
         moon = icon("moon", ""),
+        eye = icon("eye", ""),
         split = icon("split", ""),
         upload = icon("upload", ""),
         download = icon("download", ""),
@@ -159,6 +166,7 @@ struct App {
     sidebar_meta: Element,
     save_state: Element,
     split_button: Element,
+    preview_button: Element,
     sidebar_button: Element,
     theme_button: Element,
     panes_container: Element,
@@ -166,6 +174,7 @@ struct App {
     import_reader: RefCell<Option<FileReader>>,
     panes: Vec<Element>,
     editors: Vec<HtmlTextAreaElement>,
+    previews: Vec<Element>,
     pane_counts: Vec<Element>,
     state: RefCell<State>,
     theme: Cell<Theme>,
@@ -194,6 +203,7 @@ impl App {
         let sidebar_meta = query_el(&root, "#sidebar-meta");
         let save_state = query_el(&root, "#save-state");
         let split_button = query_el(&root, "#split-toggle");
+        let preview_button = query_el(&root, "#preview-toggle");
         let sidebar_button = query_el(&root, "#sidebar-toggle");
         let theme_button = query_el(&root, "#theme-toggle");
         let panes_container = query_el(&root, "#panes");
@@ -207,6 +217,7 @@ impl App {
             query_typed::<HtmlTextAreaElement>(&root, "#editor-0"),
             query_typed::<HtmlTextAreaElement>(&root, "#editor-1"),
         ];
+        let previews = vec![query_el(&root, "#preview-0"), query_el(&root, "#preview-1")];
         let pane_counts = vec![query_el(&root, "#counts-0"), query_el(&root, "#counts-1")];
 
         let app = Rc::new(Self {
@@ -220,6 +231,7 @@ impl App {
             sidebar_meta,
             save_state,
             split_button,
+            preview_button,
             sidebar_button,
             theme_button,
             panes_container,
@@ -227,6 +239,7 @@ impl App {
             import_reader: RefCell::new(None),
             panes,
             editors,
+            previews,
             pane_counts,
             state: RefCell::new(state),
             theme: Cell::new(theme),
@@ -366,6 +379,7 @@ impl App {
             "sidebar" => self.toggle_sidebar(),
             "sidebar-close" => self.set_sidebar(false, true),
             "theme" => self.toggle_theme(),
+            "preview" => self.toggle_preview(),
             "split" => self.toggle_split(),
             "import" => self.open_import_dialog(),
             "export" => self.export_active(),
@@ -530,14 +544,39 @@ impl App {
             return;
         }
 
-        if key == "Tab" && !key_event.shift_key() {
-            if let Some(editor) = target_editor {
-                key_event.prevent_default();
+        if key == "Enter"
+            && !modifier
+            && !key_event.alt_key()
+            && !key_event.shift_key()
+        {
+            if let Some(editor) = target_editor.as_ref() {
                 let pane = editor
                     .get_attribute("data-editor")
                     .and_then(|value| value.parse::<usize>().ok())
                     .unwrap_or(0);
-                self.insert_two_spaces(&editor, pane);
+                if self.continue_list(editor, pane) {
+                    key_event.prevent_default();
+                    return;
+                }
+            }
+        }
+
+        if key == "Tab" {
+            if let Some(editor) = target_editor.as_ref() {
+                let pane = editor
+                    .get_attribute("data-editor")
+                    .and_then(|value| value.parse::<usize>().ok())
+                    .unwrap_or(0);
+                if key_event.shift_key() {
+                    if self.outdent_list_item(editor, pane) {
+                        key_event.prevent_default();
+                    }
+                } else {
+                    key_event.prevent_default();
+                    if !self.indent_list_item(editor, pane) {
+                        self.insert_two_spaces(editor, pane);
+                    }
+                }
             }
         }
     }
@@ -567,6 +606,119 @@ impl App {
         self.handle_input(pane);
     }
 
+    /// Continue a Markdown list when Enter is pressed.
+    /// Returning `false` lets the browser insert a normal newline.
+    fn continue_list(&self, editor: &HtmlTextAreaElement, pane: usize) -> bool {
+        let value = editor.value();
+        let (start, end) = self.selection_bytes(editor, &value);
+        let (line_start, line_end) = line_bounds(&value, start);
+        let line = &value[line_start..line_end];
+        let Some(parsed) = edit::parse_list_line(line) else {
+            return false;
+        };
+
+        let content = &line[parsed.content_start..];
+        let (task, text) = edit::split_task(content);
+        let empty = text.trim().is_empty();
+
+        let (next, caret_byte) = if empty && start == end {
+            // Enter on an empty item finishes the list: drop the marker and
+            // leave a plain empty line.
+            let mut next = String::with_capacity(value.len());
+            next.push_str(&value[..line_start]);
+            next.push_str(&value[line_end..]);
+            (next, line_start)
+        } else {
+            let indent = &line[..parsed.indent];
+            let marker = edit::next_marker(parsed.kind);
+            let task_marker = if task { "[ ] " } else { "" };
+            let inserted = format!("\n{indent}{marker}{task_marker}");
+            let mut next = String::with_capacity(value.len() + inserted.len());
+            next.push_str(&value[..start]);
+            next.push_str(&inserted);
+            next.push_str(&value[end..]);
+            (next, start + inserted.len())
+        };
+
+        self.set_editor_value(editor, pane, &next, caret_byte);
+        true
+    }
+
+    /// Tab inside a list item nests it one level. Returns `false` for ordinary
+    /// text so the caller can keep the old two-spaces behaviour.
+    fn indent_list_item(&self, editor: &HtmlTextAreaElement, pane: usize) -> bool {
+        let value = editor.value();
+        let (start, end) = self.selection_bytes(editor, &value);
+        if start != end {
+            return false;
+        }
+        let (line_start, line_end) = line_bounds(&value, start);
+        let line = &value[line_start..line_end];
+        let Some(parsed) = edit::parse_list_line(line) else {
+            return false;
+        };
+
+        let width = parsed.marker_width().max(2);
+        let padding = " ".repeat(width);
+        let mut next = String::with_capacity(value.len() + width);
+        next.push_str(&value[..line_start]);
+        next.push_str(&padding);
+        next.push_str(&value[line_start..]);
+        self.set_editor_value(editor, pane, &next, start + width);
+        true
+    }
+
+    /// Shift+Tab pulls a list item one level back out.
+    fn outdent_list_item(&self, editor: &HtmlTextAreaElement, pane: usize) -> bool {
+        let value = editor.value();
+        let (start, end) = self.selection_bytes(editor, &value);
+        if start != end {
+            return false;
+        }
+        let (line_start, line_end) = line_bounds(&value, start);
+        let line = &value[line_start..line_end];
+        let Some(parsed) = edit::parse_list_line(line) else {
+            return false;
+        };
+        if parsed.indent == 0 {
+            return true;
+        }
+
+        let remove = parsed.indent.min(parsed.marker_width().max(2));
+        let mut next = String::with_capacity(value.len());
+        next.push_str(&value[..line_start]);
+        next.push_str(&value[line_start + remove..]);
+        self.set_editor_value(editor, pane, &next, start.saturating_sub(remove));
+        true
+    }
+
+    fn selection_bytes(&self, editor: &HtmlTextAreaElement, value: &str) -> (usize, usize) {
+        let start = editor.selection_start().ok().flatten().unwrap_or(0) as usize;
+        let end = editor
+            .selection_end()
+            .ok()
+            .flatten()
+            .unwrap_or(start as u32) as usize;
+        let (start, end) = if start <= end { (start, end) } else { (end, start) };
+        (
+            util::utf16_to_byte_index(value, start),
+            util::utf16_to_byte_index(value, end),
+        )
+    }
+
+    fn set_editor_value(
+        &self,
+        editor: &HtmlTextAreaElement,
+        pane: usize,
+        value: &str,
+        caret_byte: usize,
+    ) {
+        editor.set_value(value);
+        let caret = util::byte_to_utf16_index(value, caret_byte);
+        let _ = editor.set_selection_range(caret as u32, caret as u32);
+        self.handle_input(pane);
+    }
+
     fn handle_input(&self, pane: usize) {
         let Some(editor) = self.editors.get(pane) else {
             return;
@@ -576,6 +728,7 @@ impl App {
 
         let info = {
             let mut state = self.state.borrow_mut();
+            let preview_on = state.session.preview;
             let id = match state.session.pane_note(pane) {
                 Some(id) => id.to_string(),
                 None => return,
@@ -586,6 +739,11 @@ impl App {
             if note.body == body {
                 return;
             }
+            let preview = if preview_on {
+                Some(markdown::render(&body))
+            } else {
+                None
+            };
             note.body = body;
             note.updated_at = now;
             (
@@ -593,12 +751,16 @@ impl App {
                 note.title(),
                 note.counts_label(),
                 note.list_meta(),
+                preview,
             )
         };
 
-        let (id, title, counts, list_meta) = info;
+        let (id, title, counts, list_meta, preview) = info;
         if let Some(node) = self.pane_counts.get(pane) {
             node.set_text_content(Some(&counts));
+        }
+        if let (Some(node), Some(html)) = (self.previews.get(pane), preview) {
+            node.set_inner_html(&html);
         }
         self.update_list_item(&id, &title, &list_meta);
         self.update_document_title();
@@ -1189,6 +1351,34 @@ impl App {
         Ok(())
     }
 
+    fn toggle_preview(&self) {
+        let on = {
+            let mut state = self.state.borrow_mut();
+            state.session.preview = !state.session.preview;
+            state.session.preview
+        };
+        self.apply_preview(on);
+        self.render_panes();
+        self.save_quiet();
+    }
+
+    fn apply_preview(&self, on: bool) {
+        let value = if on { "on" } else { "off" };
+        let _ = self.shell.set_attribute("data-preview", value);
+        let _ = self.panes_container.set_attribute("data-preview", value);
+        let _ = self
+            .preview_button
+            .set_attribute("aria-pressed", if on { "true" } else { "false" });
+        set_class(&self.preview_button, "is-on", on);
+        let title = if on {
+            "Скрыть markdown-просмотр"
+        } else {
+            "Показать markdown-просмотр"
+        };
+        let _ = self.preview_button.set_attribute("title", title);
+        let _ = self.preview_button.set_attribute("aria-label", title);
+    }
+
     fn toggle_split(&self) {
         let is_on = { self.state.borrow().session.split };
         if is_on {
@@ -1349,9 +1539,13 @@ impl App {
     }
 
     fn render_all(&self) {
-        let (sidebar, split) = {
+        let (sidebar, split, preview) = {
             let state = self.state.borrow();
-            (state.session.sidebar, state.session.split)
+            (
+                state.session.sidebar,
+                state.session.split,
+                state.session.preview,
+            )
         };
         let _ = self
             .shell
@@ -1363,6 +1557,7 @@ impl App {
             .panes_container
             .set_attribute("data-split", if split { "on" } else { "off" });
         self.apply_sidebar(sidebar);
+        self.apply_preview(preview);
 
         let _ = self
             .split_button
@@ -1396,6 +1591,7 @@ impl App {
         let state = self.state.borrow();
         let split = state.session.split;
         let active_pane = state.session.active_pane.min(1);
+        let preview_on = state.session.preview;
 
         for pane in 0..2 {
             let note_id = state.session.pane_note(pane).map(str::to_string);
@@ -1423,6 +1619,21 @@ impl App {
                 if let Some(editor) = self.editors.get(pane) {
                     editor.set_value("");
                 }
+            }
+
+            if let Some(preview) = self.previews.get(pane) {
+                if preview_on {
+                    let html = note
+                        .map(|note| markdown::render(&note.body))
+                        .unwrap_or_default();
+                    preview.set_inner_html(&html);
+                } else {
+                    preview.set_inner_html("");
+                }
+                let _ = preview.set_attribute(
+                    "aria-hidden",
+                    if preview_on { "false" } else { "true" },
+                );
             }
 
             let active = if split {
@@ -1641,6 +1852,18 @@ impl App {
             .create_element(tag)
             .expect("create_element should not fail")
     }
+}
+
+fn line_bounds(value: &str, byte: usize) -> (usize, usize) {
+    let start = value[..byte]
+        .rfind('\n')
+        .map(|index| index + 1)
+        .unwrap_or(0);
+    let end = value[byte..]
+        .find('\n')
+        .map(|index| byte + index)
+        .unwrap_or(value.len());
+    (start, end)
 }
 
 fn set_class(element: &Element, class: &str, enabled: bool) {

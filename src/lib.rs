@@ -1,5 +1,7 @@
 mod app;
+mod edit;
 mod icons;
+mod markdown;
 mod model;
 mod storage;
 mod util;

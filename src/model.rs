@@ -141,6 +141,7 @@ pub struct Session {
     pub secondary: Option<String>,
     pub split: bool,
     pub sidebar: bool,
+    pub preview: bool,
     pub active_pane: usize,
 }
 
@@ -151,6 +152,7 @@ impl Default for Session {
             secondary: None,
             split: false,
             sidebar: true,
+            preview: true,
             active_pane: 0,
         }
     }

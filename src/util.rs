@@ -99,3 +99,18 @@ pub fn utf16_to_byte_index(text: &str, index: usize) -> usize {
     }
     text.len()
 }
+
+/// Convert a UTF-8 byte offset into a DOM UTF-16 code-unit offset.
+pub fn byte_to_utf16_index(text: &str, index: usize) -> usize {
+    if index == 0 {
+        return 0;
+    }
+    let mut units = 0usize;
+    for (byte, ch) in text.char_indices() {
+        if byte >= index {
+            return units;
+        }
+        units += ch.len_utf16();
+    }
+    units
+}

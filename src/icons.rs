@@ -9,6 +9,10 @@ const PATHS: &[(&str, &str)] = &[
         r#"<rect x="3.5" y="4.5" width="17" height="15" rx="2"/><path d="M12 4.5v15"/>"#,
     ),
     ("download", r#"<path d="M12 4v11m-4-4 4 4 4-4M5 19h14"/>"#),
+    (
+        "eye",
+        r#"<path d="M2.8 12s3.4-5.8 9.2-5.8 9.2 5.8 9.2 5.8-3.4 5.8-9.2 5.8S2.8 12 2.8 12Z"/><circle cx="12" cy="12" r="2.7"/>"#,
+    ),
     ("upload", r#"<path d="M12 20V9m-4 4 4-4 4 4M5 4h14"/>"#),
     (
         "rename",
