@@ -6,7 +6,7 @@ use wasm_bindgen::prelude::*;
 use wasm_bindgen::JsCast;
 use web_sys::{
     Blob, BlobPropertyBag, Document, DragEvent, Element, Event, FileReader, HtmlAnchorElement,
-    HtmlElement, HtmlInputElement, HtmlTextAreaElement, KeyboardEvent, Window,
+    HtmlElement, HtmlInputElement, HtmlTextAreaElement, KeyboardEvent, MouseEvent, Window,
 };
 
 use crate::icons::icon;
@@ -421,6 +421,29 @@ impl App {
             }
         }
 
+        // Clicking a rendered block edits its Markdown source in place.
+        if let Some(block) = target.closest(".block").ok().flatten() {
+            if let Some(preview) = block.closest(".preview").ok().flatten() {
+                if let Some(pane) = preview
+                    .get_attribute("data-preview")
+                    .and_then(|value| value.parse::<usize>().ok())
+                {
+                    let mouse = event.clone().dyn_into::<MouseEvent>().ok();
+                    if let (Some(_), Some(mouse)) = (target.closest("a").ok().flatten(), mouse.as_ref())
+                    {
+                        if mouse.ctrl_key() || mouse.meta_key() {
+                            return;
+                        }
+                    }
+                    event.prevent_default();
+                    if let Some(mouse) = mouse {
+                        self.begin_block_edit(pane, &block, &mouse);
+                    }
+                    return;
+                }
+            }
+        }
+
         let Some(action_el) = target.closest("[data-act]").ok().flatten() else {
             return;
         };
@@ -648,6 +671,11 @@ impl App {
             return;
         };
         let Some(editor_el) = target.closest("[data-editor]").ok().flatten() else {
+            if target.class_list().contains("block__src") {
+                if let Ok(textarea) = target.clone().dyn_into::<HtmlTextAreaElement>() {
+                    self.update_block(&textarea);
+                }
+            }
             return;
         };
         let Some(pane) = editor_el
@@ -685,6 +713,10 @@ impl App {
         else {
             return;
         };
+        if target.class_list().contains("block__src") {
+            self.commit_block(&target);
+            return;
+        }
         let Some(input_el) = target.closest(".note-item__rename").ok().flatten() else {
             return;
         };
@@ -786,7 +818,18 @@ impl App {
             return;
         }
 
+        let block_src = target
+            .as_ref()
+            .filter(|el| el.class_list().contains("block__src"))
+            .and_then(|el| el.clone().dyn_into::<HtmlTextAreaElement>().ok());
+
         if key == "Escape" {
+            if let Some(textarea) = block_src.as_ref() {
+                key_event.prevent_default();
+                self.commit_block(textarea);
+                let _ = textarea.blur();
+                return;
+            }
             if self.is_narrow() {
                 let open = { self.state.borrow().session.sidebar };
                 if open {
@@ -814,6 +857,13 @@ impl App {
         }
 
         if key == "Tab" {
+            if let Some(textarea) = block_src.as_ref() {
+                if !key_event.shift_key() {
+                    key_event.prevent_default();
+                    self.insert_block_spaces(textarea);
+                    return;
+                }
+            }
             if let Some(editor) = target_editor.as_ref() {
                 let pane = editor
                     .get_attribute("data-editor")
@@ -856,6 +906,31 @@ impl App {
         let caret = (start + 2) as u32;
         let _ = editor.set_selection_range(caret, caret);
         self.handle_input(pane);
+    }
+
+    fn insert_block_spaces(&self, editor: &HtmlTextAreaElement) {
+        let value = editor.value();
+        let start = editor.selection_start().ok().flatten().unwrap_or(0) as usize;
+        let end = editor
+            .selection_end()
+            .ok()
+            .flatten()
+            .unwrap_or(start as u32) as usize;
+        let (start, end) = if start <= end {
+            (start, end)
+        } else {
+            (end, start)
+        };
+        let start_byte = util::utf16_to_byte_index(&value, start);
+        let end_byte = util::utf16_to_byte_index(&value, end);
+        let mut next = String::with_capacity(value.len() + 2);
+        next.push_str(&value[..start_byte]);
+        next.push_str("  ");
+        next.push_str(&value[end_byte..]);
+        editor.set_value(&next);
+        let caret = (start + 2) as u32;
+        let _ = editor.set_selection_range(caret, caret);
+        self.update_block(editor);
     }
 
     /// Continue a Markdown list when Enter is pressed.
@@ -992,7 +1067,7 @@ impl App {
                 return;
             }
             let preview = if preview_on {
-                Some(markdown::render(&body))
+                Some(live_html(&body))
             } else {
                 None
             };
@@ -1020,6 +1095,248 @@ impl App {
         self.schedule_save();
     }
 
+    /// Turn one rendered block into a small source textarea at its position.
+    fn begin_block_edit(&self, pane: usize, block: &Element, event: &MouseEvent) {
+        if block.class_list().contains("is-editing") {
+            return;
+        }
+        // Only one block may be open at a time.
+        if let Some(preview) = block.closest(".preview").ok().flatten() {
+            if let Ok(Some(previous)) = preview.query_selector(".block.is-editing") {
+                if let Ok(Some(textarea)) = previous.query_selector(".block__src") {
+                    self.commit_block(&textarea);
+                } else {
+                    set_class(&previous, "is-editing", false);
+                }
+            }
+        }
+        let start = block
+            .get_attribute("data-start")
+            .and_then(|value| value.parse::<usize>().ok());
+        let end = block
+            .get_attribute("data-end")
+            .and_then(|value| value.parse::<usize>().ok());
+        let (Some(start), Some(end)) = (start, end) else {
+            return;
+        };
+        let source = {
+            let state = self.state.borrow();
+            let Some(id) = state.session.pane_note(pane) else {
+                return;
+            };
+            let Some(note) = state.notes.iter().find(|note| note.id == id) else {
+                return;
+            };
+            match note.body.get(start..end) {
+                Some(slice) => slice.trim_end_matches('\n').to_string(),
+                None => return,
+            }
+        };
+        // Keep the separating newlines outside of the editable slice.
+        let end = start + source.len();
+
+        let rect = block.get_bounding_client_rect();
+        let textarea = self
+            .document
+            .create_element("textarea")
+            .ok()
+            .and_then(|node| node.dyn_into::<HtmlTextAreaElement>().ok());
+        let Some(textarea) = textarea else {
+            return;
+        };
+        textarea.set_class_name("block__src");
+        let _ = textarea.set_attribute("spellcheck", "true");
+        let _ = textarea.set_attribute("data-start", &start.to_string());
+        let _ = textarea.set_attribute("data-end", &end.to_string());
+        textarea.set_value(&source);
+        block.set_inner_html("");
+        let _ = block.append_child(&textarea);
+        let _ = block.set_attribute("data-end", &end.to_string());
+        set_class(block, "is-editing", true);
+
+        let _ = textarea.set_attribute("style", "height:auto");
+        let height = textarea.scroll_height().max(28);
+        let _ = textarea.set_attribute("style", &format!("height:{height}px"));
+        let _ = textarea.focus();
+
+        // Put the caret near the clicked point: pick the line by vertical
+        // position, then the column by horizontal position.
+        let text = textarea.value();
+        let lines: Vec<&str> = text.split('\n').collect();
+        let line_count = lines.len().max(1);
+        let ratio = if rect.height() > 0.0 {
+            ((f64::from(event.client_y()) - rect.top()) / rect.height()).clamp(0.0, 1.0)
+        } else {
+            1.0
+        };
+        let line_index = ((ratio * line_count as f64).floor() as usize).min(line_count - 1);
+        let line = lines[line_index];
+        let width_ratio = if rect.width() > 0.0 {
+            ((f64::from(event.client_x()) - rect.left()) / rect.width()).clamp(0.0, 1.0)
+        } else {
+            1.0
+        };
+        let line_chars = line.chars().count();
+        let column = ((width_ratio * line_chars as f64).floor() as usize).min(line_chars);
+        let caret_in_line = line
+            .char_indices()
+            .nth(column)
+            .map(|(index, _)| index)
+            .unwrap_or(line.len());
+        let line_start: usize = lines.iter().take(line_index).map(|l| l.len() + 1).sum();
+        let caret_byte = (line_start + caret_in_line).min(text.len());
+        let caret = util::byte_to_utf16_index(&text, caret_byte);
+        let _ = textarea.set_selection_range(caret as u32, caret as u32);
+    }
+
+    /// Write the edited block back into the note and move later blocks.
+    fn update_block(&self, textarea: &HtmlTextAreaElement) {
+        let Some(preview) = textarea.closest(".preview").ok().flatten() else {
+            return;
+        };
+        let pane = preview
+            .get_attribute("data-preview")
+            .and_then(|value| value.parse::<usize>().ok());
+        let start = textarea
+            .get_attribute("data-start")
+            .and_then(|value| value.parse::<usize>().ok());
+        let old_end = textarea
+            .get_attribute("data-end")
+            .and_then(|value| value.parse::<usize>().ok());
+        let (Some(pane), Some(start), Some(old_end)) = (pane, start, old_end) else {
+            return;
+        };
+
+        let value = textarea.value();
+        let new_end = start + value.len();
+        let delta = new_end as isize - old_end as isize;
+
+        let info = {
+            let mut state = self.state.borrow_mut();
+            let Some(id) = state.session.pane_note(pane).map(str::to_string) else {
+                return;
+            };
+            let Some(note) = state.notes.iter_mut().find(|note| note.id == id) else {
+                return;
+            };
+            if start > old_end || old_end > note.body.len() {
+                return;
+            }
+            note.body = format!("{}{}{}", &note.body[..start], value, &note.body[old_end..]);
+            note.updated_at = self.now();
+            (
+                note.id.clone(),
+                note.body.clone(),
+                note.title(),
+                note.counts_label(),
+                note.list_meta(),
+            )
+        };
+
+        let (id, body, title, counts, list_meta) = info;
+        if let Some(editor) = self.editors.get(pane) {
+            if editor.value() != body {
+                editor.set_value(&body);
+            }
+        }
+        let _ = textarea.set_attribute("data-end", &new_end.to_string());
+        if let Some(block) = textarea.closest(".block").ok().flatten() {
+            let _ = block.set_attribute("data-end", &new_end.to_string());
+        }
+        // Keep the ranges of the following blocks valid while the textarea
+        // stays open; a full re-render happens when the block loses focus.
+        if delta != 0 {
+            if let Ok(items) = preview.query_selector_all(".block") {
+                for index in 0..items.length() {
+                    let Some(node) = items.item(index).and_then(|n| n.dyn_into::<Element>().ok())
+                    else {
+                        continue;
+                    };
+                    let Some(item_start) = node
+                        .get_attribute("data-start")
+                        .and_then(|value| value.parse::<usize>().ok())
+                    else {
+                        continue;
+                    };
+                    if item_start <= start {
+                        continue;
+                    }
+                    let _ = node
+                        .set_attribute("data-start", &(item_start as isize + delta).to_string());
+                    if let Some(item_end) = node
+                        .get_attribute("data-end")
+                        .and_then(|value| value.parse::<usize>().ok())
+                    {
+                        let _ = node
+                            .set_attribute("data-end", &(item_end as isize + delta).to_string());
+                    }
+                }
+            }
+        }
+
+        let _ = textarea.set_attribute("style", "height:auto");
+        let height = textarea.scroll_height().max(28);
+        let _ = textarea.set_attribute("style", &format!("height:{height}px"));
+        if let Some(node) = self.pane_counts.get(pane) {
+            node.set_text_content(Some(&counts));
+        }
+        self.update_list_item(&id, &title, &list_meta);
+        self.queue_save();
+    }
+
+    /// Re-render a block once the caret leaves it.
+    fn commit_block(&self, textarea: &Element) {
+        let Some(block) = textarea.closest(".block").ok().flatten() else {
+            return;
+        };
+        let Some(preview) = textarea.closest(".preview").ok().flatten() else {
+            return;
+        };
+        let pane = preview
+            .get_attribute("data-preview")
+            .and_then(|value| value.parse::<usize>().ok());
+        let start = textarea
+            .get_attribute("data-start")
+            .and_then(|value| value.parse::<usize>().ok());
+        let end = textarea
+            .get_attribute("data-end")
+            .and_then(|value| value.parse::<usize>().ok());
+        let (Some(pane), Some(start), Some(end)) = (pane, start, end) else {
+            return;
+        };
+        let html = {
+            let state = self.state.borrow();
+            let Some(id) = state.session.pane_note(pane) else {
+                return;
+            };
+            let Some(note) = state.notes.iter().find(|note| note.id == id) else {
+                return;
+            };
+            let Some(source) = note.body.get(start..end) else {
+                return;
+            };
+            let base = task_base(&note.body, start);
+            block_html(source, base)
+        };
+        block.set_inner_html(&html);
+        let _ = block.set_attribute("data-start", &start.to_string());
+        let _ = block.set_attribute("data-end", &end.to_string());
+        set_class(&block, "is-editing", false);
+        self.renumber_tasks(&preview);
+    }
+
+    /// Keep checkbox indices in sync with the source after an edit.
+    fn renumber_tasks(&self, preview: &Element) {
+        let Ok(boxes) = preview.query_selector_all("input[type=\"checkbox\"][data-task]") else {
+            return;
+        };
+        for index in 0..boxes.length() {
+            if let Some(node) = boxes.item(index).and_then(|n| n.dyn_into::<Element>().ok()) {
+                let _ = node.set_attribute("data-task", &index.to_string());
+            }
+        }
+    }
+
     /// Flip the n-th `- [ ]` / `- [x]` item of the note bound to `pane`.
     fn toggle_task(&self, pane: usize, index: usize) {
         let info = {
@@ -1036,7 +1353,7 @@ impl App {
             let mut seen = 0usize;
             let mut flipped = false;
             for line in lines.iter_mut() {
-                let Some(marker) = task_marker(line) else {
+                let Some(marker) = markdown::task_marker(line) else {
                     continue;
                 };
                 if seen == index {
@@ -1056,7 +1373,7 @@ impl App {
             note.updated_at = self.now();
             let body = note.body.clone();
             let preview = if preview_on {
-                Some(markdown::render(&body))
+                Some(live_html(&body))
             } else {
                 None
             };
@@ -1694,12 +2011,20 @@ impl App {
             .set_attribute("aria-pressed", if on { "true" } else { "false" });
         set_class(&self.preview_button, "is-on", on);
         let title = if on {
-            "Скрыть markdown-просмотр"
+            "Показать исходник"
         } else {
-            "Показать markdown-просмотр"
+            "Показать отрендеренный текст"
         };
+        if let Ok(Some(label)) = self.preview_button.query_selector(".action__label") {
+            label.set_text_content(Some(if on { "src" } else { "md" }));
+        }
         let _ = self.preview_button.set_attribute("title", title);
         let _ = self.preview_button.set_attribute("aria-label", title);
+        if on {
+            for editor in &self.editors {
+                let _ = editor.blur();
+            }
+        }
     }
 
     fn toggle_split(&self) {
@@ -1946,9 +2271,7 @@ impl App {
 
             if let Some(preview) = self.previews.get(pane) {
                 if preview_on {
-                    let html = note
-                        .map(|note| markdown::render(&note.body))
-                        .unwrap_or_default();
+                    let html = note.map(|note| live_html(&note.body)).unwrap_or_default();
                     preview.set_inner_html(&html);
                 } else {
                     preview.set_inner_html("");
@@ -2197,38 +2520,44 @@ impl App {
     }
 }
 
-fn task_marker(line: &str) -> Option<usize> {
-    let bytes = line.as_bytes();
-    let mut i = 0;
-    while i < bytes.len() && (bytes[i] == b' ' || bytes[i] == b'\t') {
-        i += 1;
+/// HTML for the whole note in live mode: one wrapper per top-level block.
+fn live_html(body: &str) -> String {
+    let blocks = markdown::blocks(body);
+    if blocks.is_empty() {
+        return "<div class=\"block is-empty\" data-start=\"0\" data-end=\"0\">\
+                <p class=\"block__placeholder\">Начните печатать…</p></div>"
+            .to_string();
     }
-    let mut digits = false;
-    while i < bytes.len() && bytes[i].is_ascii_digit() {
-        digits = true;
-        i += 1;
+    let mut out = String::with_capacity(body.len() + 256);
+    for block in blocks {
+        let base = task_base(body, block.start);
+        out.push_str("<div class=\"block\" data-start=\"");
+        out.push_str(&block.start.to_string());
+        out.push_str("\" data-end=\"");
+        out.push_str(&block.end.to_string());
+        out.push_str("\">");
+        out.push_str(&block_html(&body[block.start..block.end], base));
+        out.push_str("</div>");
     }
-    if digits {
-        if i >= bytes.len() || (bytes[i] != b'.' && bytes[i] != b')') {
-            return None;
-        }
-        i += 1;
-    } else if i < bytes.len() && matches!(bytes[i], b'-' | b'*' | b'+') {
-        i += 1;
-    } else {
-        return None;
+    out
+}
+
+/// Rendered HTML of one block, including an empty-block placeholder.
+fn block_html(source: &str, task_base: usize) -> String {
+    if source.trim().is_empty() {
+        return "<p class=\"block__placeholder\">Пустой блок</p>".to_string();
     }
-    if i >= bytes.len() || bytes[i] != b' ' {
-        return None;
-    }
-    i += 1;
-    if i + 2 >= bytes.len() || bytes[i] != b'[' || bytes[i + 2] != b']' {
-        return None;
-    }
-    if !matches!(bytes[i + 1], b' ' | b'x' | b'X') {
-        return None;
-    }
-    Some(i)
+    markdown::render_from(source, task_base)
+}
+
+fn task_base(body: &str, start: usize) -> usize {
+    let Some(prefix) = body.get(..start) else {
+        return 0;
+    };
+    prefix
+        .lines()
+        .filter(|line| markdown::task_marker(line).is_some())
+        .count()
 }
 
 fn line_bounds(value: &str, byte: usize) -> (usize, usize) {

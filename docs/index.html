@@ -22,7 +22,7 @@
         if (t === 'dark' || t === 'light') document.documentElement.dataset.theme = t;
       } catch (e) {}
     </script>
-    <link rel="stylesheet" href="/notes/styles.css" integrity="sha384-rzrawFeuypU6KEUlysn0nG7fS6ELL+tHo+ytUUyVR+eWvuI1HIFYVDVBVHjAe099"/>
+    <link rel="stylesheet" href="/notes/styles.css" integrity="sha384-YjAjhJex6unxDo//qLW8goMb+C9UwOMASZPgqg4bhutfl1dn6SOSnHeXbE5TADLB"/>
     
 <script type="module">
 import init, * as bindings from '/notes/plain.js';
@@ -36,7 +36,7 @@ window.wasmBindings = bindings;
 dispatchEvent(new CustomEvent("TrunkApplicationStarted", {detail: {wasm}}));
 
 </script>
-  <link rel="modulepreload" href="/notes/plain.js" crossorigin="anonymous" integrity="sha384-muRho44An2q3gMQGQUpXAjzyQ+3YHv2hwdMoMGBw3uOQjFBrNyVOU4pP2Yjb8hjV"><link rel="preload" href="/notes/plain_bg.wasm" crossorigin="anonymous" integrity="sha384-mY7TlRB+Ig/rtxi3txe0sPCtrLNLU4pY7q5D3oJMsQ0Zk5UbYindqaHKGgE4xHoc" as="fetch" type="application/wasm"></head>
+  <link rel="modulepreload" href="/notes/plain.js" crossorigin="anonymous" integrity="sha384-HVb6GNBc/iqvds3FJ8ZzAmY7eCgjH4UkDWHd6yYgG/us95ZXxEbkvTp+S74hWJoV"><link rel="preload" href="/notes/plain_bg.wasm" crossorigin="anonymous" integrity="sha384-fVG3/VUaC1lSBukkpmfG2P4Lrntl6gmNgHOdBwNKzLfwQvR1H04syLR2vqCvNSiN" as="fetch" type="application/wasm"></head>
   <body>
     <main id="app"><div class="boot">p<span>.</span></div></main>
   </body>
