@@ -5,8 +5,8 @@ use wasm_bindgen::closure::Closure;
 use wasm_bindgen::prelude::*;
 use wasm_bindgen::JsCast;
 use web_sys::{
-    Blob, BlobPropertyBag, Document, Element, Event, FileReader, HtmlAnchorElement, HtmlElement,
-    HtmlInputElement, HtmlTextAreaElement, KeyboardEvent, Window,
+    Blob, BlobPropertyBag, Document, DragEvent, Element, Event, FileReader, HtmlAnchorElement,
+    HtmlElement, HtmlInputElement, HtmlTextAreaElement, KeyboardEvent, Window,
 };
 
 use crate::icons::icon;
@@ -186,6 +186,7 @@ struct App {
     status_callback: RefCell<Option<Closure<dyn FnMut()>>>,
     self_ref: RefCell<Weak<App>>,
     closures: RefCell<Vec<Closure<dyn FnMut(Event)>>>,
+    drag_id: RefCell<Option<String>>,
 }
 
 impl App {
@@ -251,6 +252,7 @@ impl App {
             status_callback: RefCell::new(None),
             self_ref: RefCell::new(Weak::new()),
             closures: RefCell::new(Vec::new()),
+            drag_id: RefCell::new(None),
         });
         *app.self_ref.borrow_mut() = Rc::downgrade(&app);
         app
@@ -286,6 +288,38 @@ impl App {
         self.root
             .add_event_listener_with_callback("click", click.as_ref().unchecked_ref())?;
         self.closures.borrow_mut().push(click);
+
+        let drag_start_this = Rc::clone(&this);
+        let drag_start = Closure::<dyn FnMut(Event)>::new(move |event: Event| {
+            drag_start_this.on_drag_start(event);
+        });
+        self.list
+            .add_event_listener_with_callback("dragstart", drag_start.as_ref().unchecked_ref())?;
+        self.closures.borrow_mut().push(drag_start);
+
+        let drag_over_this = Rc::clone(&this);
+        let drag_over = Closure::<dyn FnMut(Event)>::new(move |event: Event| {
+            drag_over_this.on_drag_over(event);
+        });
+        self.list
+            .add_event_listener_with_callback("dragover", drag_over.as_ref().unchecked_ref())?;
+        self.closures.borrow_mut().push(drag_over);
+
+        let drop_this = Rc::clone(&this);
+        let drop = Closure::<dyn FnMut(Event)>::new(move |event: Event| {
+            drop_this.on_drop(event);
+        });
+        self.list
+            .add_event_listener_with_callback("drop", drop.as_ref().unchecked_ref())?;
+        self.closures.borrow_mut().push(drop);
+
+        let drag_end_this = Rc::clone(&this);
+        let drag_end = Closure::<dyn FnMut(Event)>::new(move |event: Event| {
+            drag_end_this.on_drag_end(event);
+        });
+        self.list
+            .add_event_listener_with_callback("dragend", drag_end.as_ref().unchecked_ref())?;
+        self.closures.borrow_mut().push(drag_end);
 
         let input_this = Rc::clone(&this);
         let input = Closure::<dyn FnMut(Event)>::new(move |event: Event| {
@@ -369,6 +403,24 @@ impl App {
             }
         }
 
+        // Task-list checkboxes in the markdown preview are real controls:
+        // clicking one rewrites `[ ]` / `[x]` in the note source.
+        if let Some(checkbox) = target.closest("input[type=\"checkbox\"]").ok().flatten() {
+            if let Some(preview) = checkbox.closest(".preview").ok().flatten() {
+                event.prevent_default();
+                let pane = preview
+                    .get_attribute("data-preview")
+                    .and_then(|value| value.parse::<usize>().ok());
+                let index = checkbox
+                    .get_attribute("data-task")
+                    .and_then(|value| value.parse::<usize>().ok());
+                if let (Some(pane), Some(index)) = (pane, index) {
+                    self.toggle_task(pane, index);
+                }
+                return;
+            }
+        }
+
         let Some(action_el) = target.closest("[data-act]").ok().flatten() else {
             return;
         };
@@ -401,6 +453,191 @@ impl App {
             }
             _ => {}
         }
+    }
+
+    /// Sidebar reordering: remember which note the pointer picked up.
+    fn on_drag_start(&self, event: Event) {
+        let Some(target) = event
+            .target()
+            .and_then(|target| target.dyn_into::<Element>().ok())
+        else {
+            return;
+        };
+        if target.closest(".note-item__rename").ok().flatten().is_some() {
+            return;
+        }
+        let Some(item) = target.closest(".note-item").ok().flatten() else {
+            return;
+        };
+        let Some(id) = item.get_attribute("data-id") else {
+            return;
+        };
+        set_class(&item, "is-dragging", true);
+        *self.drag_id.borrow_mut() = Some(id.clone());
+        if let Ok(drag) = event.dyn_into::<DragEvent>() {
+            if let Some(data) = drag.data_transfer() {
+                let _ = data.set_data("text/plain", &id);
+                let _ = data.set_effect_allowed("move");
+            }
+        }
+    }
+
+    fn on_drag_over(&self, event: Event) {
+        if self.drag_id.borrow().is_none() {
+            return;
+        }
+        let Some(drag) = event.clone().dyn_into::<DragEvent>().ok() else {
+            return;
+        };
+        drag.prevent_default();
+        if let Some(data) = drag.data_transfer() {
+            let _ = data.set_drop_effect("move");
+        }
+
+        let target = event
+            .target()
+            .and_then(|target| target.dyn_into::<Element>().ok());
+        let dragged = self.drag_id.borrow().clone();
+        let mut marker: Option<(Element, bool)> = None;
+        if let Some(target) = target {
+            if let Some(item) = target.closest(".note-item").ok().flatten() {
+                let same = dragged
+                    .as_deref()
+                    .zip(item.get_attribute("data-id").as_deref())
+                    .map(|(a, b)| a == b)
+                    .unwrap_or(false);
+                if !same {
+                    let after = self.pointer_after_middle(&item, &drag);
+                    marker = Some((item, after));
+                }
+            }
+        }
+        self.clear_drop_marks();
+        if let Some((item, after)) = marker {
+            set_class(
+                &item,
+                if after { "is-drop-after" } else { "is-drop-before" },
+                true,
+            );
+        }
+    }
+
+    fn on_drop(&self, event: Event) {
+        let Some(dragged) = self.drag_id.borrow().clone() else {
+            return;
+        };
+        let Some(drag) = event.clone().dyn_into::<DragEvent>().ok() else {
+            return;
+        };
+        drag.prevent_default();
+        self.clear_drop_marks();
+
+        let target = event
+            .target()
+            .and_then(|target| target.dyn_into::<Element>().ok());
+        let Some(target) = target else {
+            return;
+        };
+        if let Some(item) = target.closest(".note-item").ok().flatten() {
+            let Some(id) = item.get_attribute("data-id") else {
+                return;
+            };
+            if id != dragged {
+                let after = self.pointer_after_middle(&item, &drag);
+                self.move_note(&dragged, &id, after);
+            }
+            return;
+        }
+        if target.closest("#note-list").ok().flatten().is_some() {
+            self.move_note_to_end(&dragged);
+        }
+    }
+
+    fn on_drag_end(&self, _event: Event) {
+        self.clear_drop_marks();
+        *self.drag_id.borrow_mut() = None;
+        if let Ok(items) = self.list.query_selector_all(".note-item") {
+            for index in 0..items.length() {
+                if let Some(node) = items.item(index).and_then(|n| n.dyn_into::<Element>().ok()) {
+                    set_class(&node, "is-dragging", false);
+                }
+            }
+        }
+    }
+
+    fn clear_drop_marks(&self) {
+        let Ok(items) = self.list.query_selector_all(".note-item") else {
+            return;
+        };
+        for index in 0..items.length() {
+            let Some(node) = items.item(index).and_then(|n| n.dyn_into::<Element>().ok()) else {
+                continue;
+            };
+            set_class(&node, "is-drop-before", false);
+            set_class(&node, "is-drop-after", false);
+        }
+    }
+
+    fn pointer_after_middle(&self, item: &Element, event: &DragEvent) -> bool {
+        let rect = item.get_bounding_client_rect();
+        let y = f64::from(event.client_y());
+        y > rect.top() + rect.height() / 2.0
+    }
+
+    fn move_note(&self, dragged: &str, target: &str, after: bool) {
+        {
+            let mut state = self.state.borrow_mut();
+            let Some(from) = state.notes.iter().position(|note| note.id == dragged) else {
+                return;
+            };
+            let note = state.notes.remove(from);
+            let Some(mut index) = state.notes.iter().position(|note| note.id == target) else {
+                state.notes.insert(from, note);
+                return;
+            };
+            if after {
+                index += 1;
+            }
+            state.notes.insert(index, note);
+        }
+        self.after_reorder();
+    }
+
+    fn move_note_to_end(&self, dragged: &str) {
+        {
+            let mut state = self.state.borrow_mut();
+            let Some(from) = state.notes.iter().position(|note| note.id == dragged) else {
+                return;
+            };
+            if from + 1 == state.notes.len() {
+                return;
+            }
+            let note = state.notes.remove(from);
+            state.notes.push(note);
+        }
+        self.after_reorder();
+    }
+
+    fn move_note_by(&self, id: &str, delta: isize) {
+        {
+            let mut state = self.state.borrow_mut();
+            let Some(from) = state.notes.iter().position(|note| note.id == id) else {
+                return;
+            };
+            let target = from as isize + delta;
+            if target < 0 || target >= state.notes.len() as isize {
+                return;
+            }
+            let note = state.notes.remove(from);
+            state.notes.insert(target as usize, note);
+        }
+        self.after_reorder();
+    }
+
+    fn after_reorder(&self) {
+        self.render_list();
+        self.save_quiet();
+        self.flash("порядок обновлён", "is-saved", 1200);
     }
 
     fn on_input(&self, event: Event) {
@@ -501,6 +738,21 @@ impl App {
                 if let Some(id) = item.get_attribute("data-id") {
                     key_event.prevent_default();
                     self.begin_rename(&id);
+                }
+            }
+            return;
+        }
+
+        // Alt+↑ / Alt+↓ moves the focused note inside the sidebar.
+        if key_event.alt_key()
+            && (key == "ArrowUp" || key == "ArrowDown")
+            && rename_input.is_none()
+        {
+            if let Some(item) = note_item.as_ref() {
+                if let Some(id) = item.get_attribute("data-id") {
+                    key_event.prevent_default();
+                    self.move_note_by(&id, if key == "ArrowUp" { -1 } else { 1 });
+                    self.focus_note_item(&id);
                 }
             }
             return;
@@ -764,6 +1016,77 @@ impl App {
         }
         self.update_list_item(&id, &title, &list_meta);
         self.update_document_title();
+        self.set_status("сохраняю…", "is-saving");
+        self.schedule_save();
+    }
+
+    /// Flip the n-th `- [ ]` / `- [x]` item of the note bound to `pane`.
+    fn toggle_task(&self, pane: usize, index: usize) {
+        let info = {
+            let mut state = self.state.borrow_mut();
+            let preview_on = state.session.preview;
+            let Some(id) = state.session.pane_note(pane).map(str::to_string) else {
+                return;
+            };
+            let Some(note) = state.notes.iter_mut().find(|note| note.id == id) else {
+                return;
+            };
+
+            let mut lines: Vec<String> = note.body.split('\n').map(str::to_string).collect();
+            let mut seen = 0usize;
+            let mut flipped = false;
+            for line in lines.iter_mut() {
+                let Some(marker) = task_marker(line) else {
+                    continue;
+                };
+                if seen == index {
+                    let checked = matches!(line.as_bytes().get(marker + 1), Some(b'x') | Some(b'X'));
+                    let replacement = if checked { " " } else { "x" };
+                    line.replace_range(marker + 1..marker + 2, replacement);
+                    flipped = true;
+                    break;
+                }
+                seen += 1;
+            }
+            if !flipped {
+                return;
+            }
+
+            note.body = lines.join("\n");
+            note.updated_at = self.now();
+            let body = note.body.clone();
+            let preview = if preview_on {
+                Some(markdown::render(&body))
+            } else {
+                None
+            };
+            (
+                note.id.clone(),
+                body,
+                note.title(),
+                note.counts_label(),
+                note.list_meta(),
+                preview,
+            )
+        };
+
+        let (id, body, title, counts, list_meta, preview) = info;
+        if let Some(editor) = self.editors.get(pane) {
+            if editor.value() != body {
+                editor.set_value(&body);
+            }
+        }
+        if let Some(node) = self.pane_counts.get(pane) {
+            node.set_text_content(Some(&counts));
+        }
+        if let (Some(node), Some(html)) = (self.previews.get(pane), preview) {
+            node.set_inner_html(&html);
+        }
+        self.update_list_item(&id, &title, &list_meta);
+        self.queue_save();
+    }
+
+    fn queue_save(&self) {
         self.set_status("сохраняю…", "is-saving");
         self.schedule_save();
     }
@@ -1693,6 +2016,17 @@ impl App {
         item.set_class_name(&classes);
         let _ = item.set_attribute("data-id", &note.id);
         let _ = item.set_attribute("role", "listitem");
+        let _ = item.set_attribute("draggable", "true");
+        let _ = item.set_attribute(
+            "title",
+            "Перетащите, чтобы изменить порядок (Alt+↑/↓ с клавиатуры)",
+        );
+
+        let grip = self.el("span");
+        grip.set_class_name("note-item__grip");
+        let _ = grip.set_attribute("aria-hidden", "true");
+        grip.set_text_content(Some("⠿"));
+        let _ = item.append_child(&grip);
 
         let open = self.el("button");
         open.set_class_name("note-item__open");
@@ -1758,6 +2092,15 @@ impl App {
         let _ = item.append_child(&acts);
 
         item
+    }
+
+    fn focus_note_item(&self, id: &str) {
+        let selector = format!(".note-item[data-id=\"{id}\"] .note-item__open");
+        if let Ok(Some(node)) = self.list.query_selector(&selector) {
+            if let Ok(button) = node.dyn_into::<HtmlElement>() {
+                let _ = button.focus();
+            }
+        }
     }
 
     fn icon_button(&self, action: &str, icon_name: &str, label: &str) -> Element {
@@ -1852,6 +2195,40 @@ impl App {
             .create_element(tag)
             .expect("create_element should not fail")
     }
+}
+
+fn task_marker(line: &str) -> Option<usize> {
+    let bytes = line.as_bytes();
+    let mut i = 0;
+    while i < bytes.len() && (bytes[i] == b' ' || bytes[i] == b'\t') {
+        i += 1;
+    }
+    let mut digits = false;
+    while i < bytes.len() && bytes[i].is_ascii_digit() {
+        digits = true;
+        i += 1;
+    }
+    if digits {
+        if i >= bytes.len() || (bytes[i] != b'.' && bytes[i] != b')') {
+            return None;
+        }
+        i += 1;
+    } else if i < bytes.len() && matches!(bytes[i], b'-' | b'*' | b'+') {
+        i += 1;
+    } else {
+        return None;
+    }
+    if i >= bytes.len() || bytes[i] != b' ' {
+        return None;
+    }
+    i += 1;
+    if i + 2 >= bytes.len() || bytes[i] != b'[' || bytes[i + 2] != b']' {
+        return None;
+    }
+    if !matches!(bytes[i + 1], b' ' | b'x' | b'X') {
+        return None;
+    }
+    Some(i)
 }
 
 fn line_bounds(value: &str, byte: usize) -> (usize, usize) {

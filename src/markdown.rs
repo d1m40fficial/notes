@@ -20,5 +20,41 @@ pub fn render(source: &str) -> String {
 
     let mut out = String::with_capacity(source.len() + 128);
     html::push_html(&mut out, parser);
+    activate_task_checkboxes(out)
+}
+
+/// pulldown-cmark renders task-list items as `disabled` checkboxes, which the
+/// browser refuses to deliver clicks to. Re-enable them and number them so the
+/// app can map a click back to the n-th `- [ ]` line of the note.
+fn activate_task_checkboxes(html: String) -> String {
+    const DISABLED: &str = "<input disabled=\"\" type=\"checkbox\"";
+    if !html.contains(DISABLED) {
+        return html;
+    }
+    let mut out = String::with_capacity(html.len() + 64);
+    let mut rest = html.as_str();
+    let mut index = 0usize;
+    while let Some(pos) = rest.find(DISABLED) {
+        out.push_str(&rest[..pos]);
+        out.push_str("<input type=\"checkbox\" data-task=\"");
+        out.push_str(&index.to_string());
+        out.push('"');
+        rest = &rest[pos + DISABLED.len()..];
+        index += 1;
+    }
+    out.push_str(rest);
     out
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn task_checkboxes_are_interactive() {
+        let html = super::render("- [ ] один\n- [x] два\n\n---\n");
+        assert!(html.contains("data-task=\"0\""), "{html}");
+        assert!(html.contains("data-task=\"1\""), "{html}");
+        assert!(!html.contains("disabled"), "{html}");
+        assert!(html.contains("checked"), "{html}");
+        assert!(html.contains("<hr />"), "{html}");
+    }
 }
