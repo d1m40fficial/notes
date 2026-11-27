@@ -49,6 +49,13 @@ fn activate_task_checkboxes(html: String) -> String {
 #[cfg(test)]
 mod tests {
     #[test]
+    fn images_keep_their_data_url() {
+        let html = super::render("![схема](data:image/png;base64,iVBORw0KGgo=)");
+        assert!(html.contains("<img src=\"data:image/png;base64,iVBORw0KGgo=\""), "{html}");
+        assert!(html.contains("alt=\"схема\""), "{html}");
+    }
+
+    #[test]
     fn task_checkboxes_are_interactive() {
         let html = super::render("- [ ] один\n- [x] два\n\n---\n");
         assert!(html.contains("data-task=\"0\""), "{html}");

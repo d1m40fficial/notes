@@ -5,8 +5,9 @@ use wasm_bindgen::closure::Closure;
 use wasm_bindgen::prelude::*;
 use wasm_bindgen::JsCast;
 use web_sys::{
-    Blob, BlobPropertyBag, Document, DragEvent, Element, Event, FileReader, HtmlAnchorElement,
-    HtmlElement, HtmlInputElement, HtmlTextAreaElement, KeyboardEvent, Window,
+    Blob, BlobPropertyBag, CanvasRenderingContext2d, ClipboardEvent, DataTransfer, Document,
+    DragEvent, Element, Event, File, FileReader, HtmlAnchorElement, HtmlCanvasElement, HtmlElement,
+    HtmlImageElement, HtmlInputElement, HtmlTextAreaElement, KeyboardEvent, Window,
 };
 
 use crate::icons::icon;
@@ -16,6 +17,10 @@ use crate::util::{self, plural};
 use crate::{edit, markdown};
 
 const MOBILE_BREAKPOINT: f64 = 780.0;
+/// Longest side of an inserted raster image, in CSS pixels.
+const MAX_IMAGE_SIDE: u32 = 1400;
+/// Data URL budget per image so `localStorage` does not fill up at once.
+const MAX_IMAGE_CHARS: usize = 700_000;
 
 pub fn mount() -> Result<(), JsValue> {
     let window = web_sys::window().ok_or_else(|| JsValue::from_str("window недоступен"))?;
@@ -106,6 +111,9 @@ fn skeleton() -> String {
         <button class="action" type="button" data-act="import" title="Импортировать .md">
           {upload}<span class="action__label">import</span>
         </button>
+        <button class="action" id="image-button" type="button" data-act="image" title="Вставить изображение (Ctrl+V или перетащите файл)">
+          {image}<span class="action__label">img</span>
+        </button>
         <button class="action" type="button" data-act="export" title="Скачать .md (Ctrl+S)">
           {download}<span class="action__label">export</span>
         </button>
@@ -116,6 +124,7 @@ fn skeleton() -> String {
     </header>
 
     <input class="file-input" id="import-file" type="file" accept=".md,.markdown,text/markdown,text/plain" hidden>
+    <input class="file-input" id="image-file" type="file" accept="image/*" hidden>
 
     <div class="panes" id="panes" data-split="off">
       <section class="pane pane--first is-active" data-pane="0" aria-label="Заметка 1">
@@ -150,6 +159,7 @@ fn skeleton() -> String {
         eye = icon("eye", ""),
         split = icon("split", ""),
         upload = icon("upload", ""),
+        image = icon("image", ""),
         download = icon("download", ""),
         trash = icon("trash", ""),
     )
@@ -172,6 +182,8 @@ struct App {
     panes_container: Element,
     import_input: HtmlInputElement,
     import_reader: RefCell<Option<FileReader>>,
+    image_input: HtmlInputElement,
+    image_reader: RefCell<Option<FileReader>>,
     panes: Vec<Element>,
     editors: Vec<HtmlTextAreaElement>,
     previews: Vec<Element>,
@@ -209,6 +221,7 @@ impl App {
         let theme_button = query_el(&root, "#theme-toggle");
         let panes_container = query_el(&root, "#panes");
         let import_input = query_typed::<HtmlInputElement>(&root, "#import-file");
+        let image_input = query_typed::<HtmlInputElement>(&root, "#image-file");
 
         let panes = vec![
             query_el(&root, ".pane[data-pane=\"0\"]"),
@@ -238,6 +251,8 @@ impl App {
             panes_container,
             import_input,
             import_reader: RefCell::new(None),
+            image_input,
+            image_reader: RefCell::new(None),
             panes,
             editors,
             previews,
@@ -353,6 +368,45 @@ impl App {
             .add_event_listener_with_callback("change", import.as_ref().unchecked_ref())?;
         self.closures.borrow_mut().push(import);
 
+        let image_this = Rc::clone(&this);
+        let image_change = Closure::<dyn FnMut(Event)>::new(move |event: Event| {
+            image_this.on_image_change(event);
+        });
+        self.image_input
+            .add_event_listener_with_callback("change", image_change.as_ref().unchecked_ref())?;
+        self.closures.borrow_mut().push(image_change);
+
+        let image_click = Closure::<dyn FnMut(Event)>::new(|event: Event| {
+            event.stop_propagation();
+        });
+        self.image_input
+            .add_event_listener_with_callback("click", image_click.as_ref().unchecked_ref())?;
+        self.closures.borrow_mut().push(image_click);
+
+        let paste_this = Rc::clone(&this);
+        let paste = Closure::<dyn FnMut(Event)>::new(move |event: Event| {
+            paste_this.on_paste(event);
+        });
+        self.root
+            .add_event_listener_with_callback("paste", paste.as_ref().unchecked_ref())?;
+        self.closures.borrow_mut().push(paste);
+
+        let file_drop_this = Rc::clone(&this);
+        let file_drop = Closure::<dyn FnMut(Event)>::new(move |event: Event| {
+            file_drop_this.on_file_drop(event);
+        });
+        self.root
+            .add_event_listener_with_callback("drop", file_drop.as_ref().unchecked_ref())?;
+        self.closures.borrow_mut().push(file_drop);
+
+        let file_drag_this = Rc::clone(&this);
+        let file_drag = Closure::<dyn FnMut(Event)>::new(move |event: Event| {
+            file_drag_this.on_file_drag_over(event);
+        });
+        self.root
+            .add_event_listener_with_callback("dragover", file_drag.as_ref().unchecked_ref())?;
+        self.closures.borrow_mut().push(file_drag);
+
         // The hidden input is clicked from the toolbar button, inside the
         // delegated root click handler. Stop that synthetic click from
         // bubbling back into the same wasm-bindgen closure.
@@ -434,6 +488,7 @@ impl App {
             "preview" => self.toggle_preview(),
             "split" => self.toggle_split(),
             "import" => self.open_import_dialog(),
+            "image" => self.open_image_dialog(),
             "export" => self.export_active(),
             "clear" => self.clear_active(),
             "note-open" | "note-split" | "note-delete" | "note-rename" => {
@@ -1128,7 +1183,7 @@ impl App {
         };
         match result {
             Ok(()) => self.flash("сохранено", "is-saved", 1600),
-            Err(_) => self.set_status("ошибка", "is-error"),
+            Err(_) => self.flash("не сохранилось: заполнено хранилище", "is-error", 2600),
         }
     }
 
@@ -1327,6 +1382,257 @@ impl App {
         } else {
             self.set_status("ошибка", "is-error");
         }
+    }
+
+    fn open_image_dialog(&self) {
+        self.image_input.set_value("");
+        let _ = self.image_input.click();
+    }
+
+    fn on_image_change(&self, _event: Event) {
+        if self.image_reader.borrow().is_some() {
+            return;
+        }
+        let Some(file) = self.image_input.files().and_then(|files| files.get(0)) else {
+            return;
+        };
+        self.image_input.set_value("");
+        self.load_image_file(file);
+    }
+
+    /// Read a picked or pasted file and hand the data URL to the pipeline.
+    fn load_image_file(&self, file: File) {
+        let name = file.name();
+        let mime = file.type_();
+        if !is_image_file(&file) {
+            self.set_status("это не изображение", "is-error");
+            return;
+        }
+        if file.size() > 12_000_000.0 {
+            self.set_status("файл больше 12 МБ", "is-error");
+            return;
+        }
+        let Ok(reader) = FileReader::new() else {
+            self.set_status("не удалось прочитать файл", "is-error");
+            return;
+        };
+        let read = reader.clone();
+        let weak = self.self_ref.borrow().clone();
+        let onload = Closure::<dyn FnMut(Event)>::new(move |_event: Event| {
+            let data = read.result().ok().and_then(|value| value.as_string());
+            if let Some(app) = weak.upgrade() {
+                app.image_reader.borrow_mut().take();
+                match data {
+                    Some(url) => app.prepare_image(&url, &name, &mime),
+                    None => app.set_status("не удалось прочитать изображение", "is-error"),
+                }
+            }
+        });
+        reader.set_onload(Some(onload.as_ref().unchecked_ref()));
+        self.closures.borrow_mut().push(onload);
+
+        let error_weak = self.self_ref.borrow().clone();
+        let onerror = Closure::<dyn FnMut(Event)>::new(move |_event: Event| {
+            if let Some(app) = error_weak.upgrade() {
+                app.image_reader.borrow_mut().take();
+                app.set_status("не удалось прочитать изображение", "is-error");
+            }
+        });
+        reader.set_onerror(Some(onerror.as_ref().unchecked_ref()));
+        self.closures.borrow_mut().push(onerror);
+
+        self.image_reader.borrow_mut().replace(reader.clone());
+        self.set_status("готовлю изображение…", "is-saving");
+        if reader.read_as_data_url(&file).is_err() {
+            self.image_reader.borrow_mut().take();
+            self.set_status("не удалось прочитать изображение", "is-error");
+        }
+    }
+
+    /// Shrink big photos through a canvas; vector and animated images are
+    /// inserted untouched so they do not lose quality or motion.
+    fn prepare_image(&self, url: &str, name: &str, mime: &str) {
+        if mime == "image/gif" || mime == "image/svg+xml" {
+            self.insert_image(url, name);
+            return;
+        }
+        let Ok(image) = HtmlImageElement::new() else {
+            self.insert_image(url, name);
+            return;
+        };
+        let canvas = self
+            .document
+            .create_element("canvas")
+            .ok()
+            .and_then(|node| node.dyn_into::<HtmlCanvasElement>().ok());
+
+        let source = image.clone();
+        let fallback = url.to_string();
+        let name_owned = name.to_string();
+        let weak = self.self_ref.borrow().clone();
+        let onload = Closure::<dyn FnMut(Event)>::new(move |_event: Event| {
+            let Some(app) = weak.upgrade() else {
+                return;
+            };
+            let width = f64::from(source.natural_width().max(1));
+            let height = f64::from(source.natural_height().max(1));
+            let scale = (f64::from(MAX_IMAGE_SIDE) / width.max(height)).min(1.0);
+            let target_w = (width * scale).round().max(1.0);
+            let target_h = (height * scale).round().max(1.0);
+
+            let Some(canvas) = canvas.as_ref() else {
+                app.insert_image(&fallback, &name_owned);
+                return;
+            };
+            canvas.set_width(target_w as u32);
+            canvas.set_height(target_h as u32);
+            let context = canvas
+                .get_context("2d")
+                .ok()
+                .flatten()
+                .and_then(|value| value.dyn_into::<CanvasRenderingContext2d>().ok());
+            let Some(context) = context else {
+                app.insert_image(&fallback, &name_owned);
+                return;
+            };
+            let _ = context.draw_image_with_html_image_element_and_dw_and_dh(
+                &source, 0.0, 0.0, target_w, target_h,
+            );
+            let compressed = canvas
+                .to_data_url_with_type_and_encoder_options(
+                    "image/webp",
+                    &wasm_bindgen::JsValue::from_f64(0.82),
+                )
+                .ok();
+            match compressed {
+                Some(data)
+                    if data.starts_with("data:image") && data.len() < fallback.len() =>
+                {
+                    app.insert_image(&data, &name_owned);
+                }
+                _ => app.insert_image(&fallback, &name_owned),
+            }
+        });
+        image.set_onload(Some(onload.as_ref().unchecked_ref()));
+        self.closures.borrow_mut().push(onload);
+
+        let error_weak = self.self_ref.borrow().clone();
+        let error_url = url.to_string();
+        let error_name = name.to_string();
+        let onerror = Closure::<dyn FnMut(Event)>::new(move |_event: Event| {
+            if let Some(app) = error_weak.upgrade() {
+                app.insert_image(&error_url, &error_name);
+            }
+        });
+        image.set_onerror(Some(onerror.as_ref().unchecked_ref()));
+        self.closures.borrow_mut().push(onerror);
+
+        image.set_src(url);
+    }
+
+    /// Put `![alt](data:…)` into the active editor at the caret.
+    fn insert_image(&self, url: &str, filename: &str) {
+        if !url.starts_with("data:image") {
+            self.set_status("не удалось вставить изображение", "is-error");
+            return;
+        }
+        if url.len() > MAX_IMAGE_CHARS {
+            self.set_status("изображение слишком большое — сохраните его меньше", "is-error");
+            return;
+        }
+        let pane = {
+            let state = self.state.borrow();
+            if state.session.split {
+                state.session.active_pane.min(1)
+            } else {
+                0
+            }
+        };
+        let Some(editor) = self.editors.get(pane) else {
+            return;
+        };
+        let value = editor.value();
+        let start = editor.selection_start().ok().flatten().unwrap_or(0) as usize;
+        let end = editor
+            .selection_end()
+            .ok()
+            .flatten()
+            .unwrap_or(start as u32) as usize;
+        let (start, end) = if start <= end {
+            (start, end)
+        } else {
+            (end, start)
+        };
+        let start_byte = util::utf16_to_byte_index(&value, start);
+        let end_byte = util::utf16_to_byte_index(&value, end);
+        let before = &value[..start_byte];
+        let after = &value[end_byte..];
+
+        let marker = format!("![{}]({})", image_alt(filename), url);
+        let prefix = if before.is_empty() || before.ends_with("\n\n") {
+            ""
+        } else if before.ends_with('\n') {
+            "\n"
+        } else {
+            "\n\n"
+        };
+        let suffix = if after.is_empty() || after.starts_with("\n\n") {
+            ""
+        } else if after.starts_with('\n') {
+            "\n"
+        } else {
+            "\n\n"
+        };
+
+        let next = format!("{before}{prefix}{marker}{suffix}{after}");
+        editor.set_value(&next);
+        let caret = start_byte + prefix.len() + marker.len() + suffix.len();
+        let caret = util::byte_to_utf16_index(&next, caret);
+        let _ = editor.set_selection_range(caret as u32, caret as u32);
+        self.handle_input(pane);
+        let _ = editor.focus();
+        self.flash("изображение вставлено", "is-saved", 1800);
+    }
+
+    fn on_paste(&self, event: Event) {
+        let Some(clipboard) = event.clone().dyn_into::<ClipboardEvent>().ok() else {
+            return;
+        };
+        let Some(data) = clipboard.clipboard_data() else {
+            return;
+        };
+        let Some(file) = first_image_file(&data) else {
+            return;
+        };
+        event.prevent_default();
+        self.load_image_file(file);
+    }
+
+    fn on_file_drag_over(&self, event: Event) {
+        let Some(drag) = event.clone().dyn_into::<DragEvent>().ok() else {
+            return;
+        };
+        let Some(data) = drag.data_transfer() else {
+            return;
+        };
+        if data.files().map(|files| files.length() > 0).unwrap_or(false) {
+            drag.prevent_default();
+            let _ = data.set_drop_effect("copy");
+        }
+    }
+
+    fn on_file_drop(&self, event: Event) {
+        let Some(drag) = event.clone().dyn_into::<DragEvent>().ok() else {
+            return;
+        };
+        let Some(data) = drag.data_transfer() else {
+            return;
+        };
+        let Some(file) = first_image_file(&data) else {
+            return;
+        };
+        drag.prevent_default();
+        self.load_image_file(file);
     }
 
     fn open_note(&self, id: &str, pane: Option<usize>, focus: bool) {
@@ -2288,6 +2594,61 @@ fn short_filename(filename: &str) -> String {
     }
     let mut short: String = name.chars().take(32).collect();
     if name.chars().count() > 32 {
+        short.push('…');
+    }
+    short
+}
+
+fn is_image_file(file: &File) -> bool {
+    if file.type_().starts_with("image/") {
+        return true;
+    }
+    let name = file.name().to_lowercase();
+    [".png", ".jpg", ".jpeg", ".gif", ".webp", ".avif", ".bmp", ".svg"]
+        .iter()
+        .any(|ext| name.ends_with(ext))
+}
+
+fn first_image_file(data: &DataTransfer) -> Option<File> {
+    if let Some(files) = data.files() {
+        for index in 0..files.length() {
+            if let Some(file) = files.get(index) {
+                if is_image_file(&file) {
+                    return Some(file);
+                }
+            }
+        }
+    }
+    let items = data.items();
+    for index in 0..items.length() {
+        let Some(item) = items.get(index) else {
+            continue;
+        };
+        if item.kind() != "file" || !item.type_().starts_with("image/") {
+            continue;
+        }
+        if let Some(file) = item.get_as_file().ok().flatten() {
+            return Some(file);
+        }
+    }
+    None
+}
+
+fn image_alt(filename: &str) -> String {
+    let name = filename.rsplit_once('.').map(|(stem, _)| stem).unwrap_or(filename);
+    let mut alt: String = name
+        .chars()
+        .map(|ch| match ch {
+            '[' | ']' | '\n' | '\r' | '\t' => ' ',
+            other => other,
+        })
+        .collect();
+    alt = alt.split_whitespace().collect::<Vec<_>>().join(" ");
+    if alt.is_empty() {
+        return "изображение".into();
+    }
+    let mut short: String = alt.chars().take(60).collect();
+    if alt.chars().count() > 60 {
         short.push('…');
     }
     short

@@ -36,6 +36,10 @@ const PATHS: &[(&str, &str)] = &[
     ),
     ("check", r#"<path d="m5 12.5 4.5 4.5L19 7"/>"#),
     (
+        "image",
+        r#"<rect x="3.5" y="4.5" width="17" height="15" rx="2"/><circle cx="9" cy="10" r="1.6"/><path d="m4.5 17 5-5 3.5 3.5 2.5-2.5 4 4"/>"#,
+    ),
+    (
         "warning",
         r#"<path d="M12 4 21 20H3L12 4Z"/><path d="M12 10v4.5M12 17.5h.01"/>"#,
     ),
