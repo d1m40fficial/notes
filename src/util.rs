@@ -11,6 +11,11 @@ pub fn uid() -> String {
     format!("n{t:x}-{r:x}")
 }
 
+/// Identifier stored in the Markdown body instead of a long data URL.
+pub fn image_id() -> String {
+    format!("img-{}", uid())
+}
+
 pub fn plural<'a>(n: usize, one: &'a str, few: &'a str, many: &'a str) -> &'a str {
     let m10 = n % 10;
     let m100 = n % 100;

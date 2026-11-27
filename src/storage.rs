@@ -1,6 +1,10 @@
 use web_sys::Storage;
 
-use crate::model::{normalize, Note, State, Theme, LEGACY_NOTE_KEY, STATE_KEY, THEME_KEY};
+use std::collections::HashMap;
+
+use crate::model::{
+    normalize, Note, State, Theme, IMAGE_KEY, LEGACY_NOTE_KEY, STATE_KEY, THEME_KEY,
+};
 
 pub struct Loaded {
     pub state: State,
@@ -60,4 +64,25 @@ pub fn write_theme(theme: Theme) -> Result<(), String> {
     storage
         .set_item(THEME_KEY, theme.as_str())
         .map_err(|_| "не удалось записать тему".to_string())
+}
+
+/// Stored images keyed by the short id that appears in note bodies.
+pub fn load_images() -> HashMap<String, String> {
+    local_storage()
+        .and_then(|storage| storage.get_item(IMAGE_KEY).ok().flatten())
+        .and_then(|raw| serde_json::from_str::<HashMap<String, String>>(&raw).ok())
+        .unwrap_or_default()
+}
+
+pub fn write_images(images: &HashMap<String, String>) -> Result<(), String> {
+    let storage = local_storage().ok_or_else(|| "localStorage недоступен".to_string())?;
+    if images.is_empty() {
+        return storage
+            .remove_item(IMAGE_KEY)
+            .map_err(|_| "не удалось очистить изображения".to_string());
+    }
+    let raw = serde_json::to_string(images).map_err(|err| err.to_string())?;
+    storage
+        .set_item(IMAGE_KEY, &raw)
+        .map_err(|_| "не удалось записать изображения".to_string())
 }

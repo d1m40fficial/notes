@@ -6,6 +6,8 @@ use crate::util::{now_ms, plural, time_ago};
 pub const STATE_KEY: &str = "plain.state.v2";
 pub const LEGACY_NOTE_KEY: &str = "plain.note.v1";
 pub const THEME_KEY: &str = "plain.theme.v1";
+/// Images live apart from notes so a data URL never lands in the editor text.
+pub const IMAGE_KEY: &str = "plain.images.v1";
 pub const SAVE_DELAY_MS: i32 = 240;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]

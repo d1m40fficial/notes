@@ -5,6 +5,8 @@
 
 use pulldown_cmark::{html, Event, Options, Parser};
 
+use std::collections::HashMap;
+
 pub fn render(source: &str) -> String {
     let mut options = Options::empty();
     options.insert(Options::ENABLE_TABLES);
@@ -21,6 +23,40 @@ pub fn render(source: &str) -> String {
     let mut out = String::with_capacity(source.len() + 128);
     html::push_html(&mut out, parser);
     activate_task_checkboxes(out)
+}
+
+/// Render a note whose images are stored under short ids like `img-n…`.
+pub fn render_with_images(source: &str, images: &HashMap<String, String>) -> String {
+    resolve_images(render(source), images)
+}
+
+fn resolve_images(html: String, images: &HashMap<String, String>) -> String {
+    if images.is_empty() || !html.contains("src=\"img-") {
+        return html;
+    }
+    let mut out = String::with_capacity(html.len());
+    let mut rest = html.as_str();
+    const PREFIX: &str = "src=\"";
+    loop {
+        let Some(pos) = rest.find(PREFIX) else {
+            out.push_str(rest);
+            break;
+        };
+        out.push_str(&rest[..pos + PREFIX.len()]);
+        rest = &rest[pos + PREFIX.len()..];
+        let Some(end) = rest.find('"') else {
+            out.push_str(rest);
+            break;
+        };
+        let value = &rest[..end];
+        match images.get(value) {
+            Some(data) => out.push_str(data),
+            None => out.push_str(value),
+        }
+        out.push('"');
+        rest = &rest[end + 1..];
+    }
+    out
 }
 
 /// pulldown-cmark renders task-list items as `disabled` checkboxes, which the

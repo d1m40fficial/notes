@@ -1,4 +1,5 @@
 use std::cell::{Cell, RefCell};
+use std::collections::HashMap;
 use std::rc::{Rc, Weak};
 
 use wasm_bindgen::closure::Closure;
@@ -21,6 +22,8 @@ const MOBILE_BREAKPOINT: f64 = 780.0;
 const MAX_IMAGE_SIDE: u32 = 1400;
 /// Data URL budget per image so `localStorage` does not fill up at once.
 const MAX_IMAGE_CHARS: usize = 700_000;
+/// Total budget for the stored image library, in characters.
+const MAX_IMAGE_STORE: usize = 4_000_000;
 
 pub fn mount() -> Result<(), JsValue> {
     let window = web_sys::window().ok_or_else(|| JsValue::from_str("window недоступен"))?;
@@ -36,6 +39,7 @@ pub fn mount() -> Result<(), JsValue> {
     root.set_inner_html(&skeleton());
 
     let app = App::new(window, document, root, loaded.state, loaded.theme);
+    app.adopt_stored_images();
     app.render_all();
     app.wire()?;
 
@@ -184,6 +188,7 @@ struct App {
     import_reader: RefCell<Option<FileReader>>,
     image_input: HtmlInputElement,
     image_reader: RefCell<Option<FileReader>>,
+    images: RefCell<HashMap<String, String>>,
     panes: Vec<Element>,
     editors: Vec<HtmlTextAreaElement>,
     previews: Vec<Element>,
@@ -253,6 +258,7 @@ impl App {
             import_reader: RefCell::new(None),
             image_input,
             image_reader: RefCell::new(None),
+            images: RefCell::new(storage::load_images()),
             panes,
             editors,
             previews,
@@ -1047,7 +1053,7 @@ impl App {
                 return;
             }
             let preview = if preview_on {
-                Some(markdown::render(&body))
+                Some(markdown::render_with_images(&body, &self.images.borrow()))
             } else {
                 None
             };
@@ -1111,7 +1117,7 @@ impl App {
             note.updated_at = self.now();
             let body = note.body.clone();
             let preview = if preview_on {
-                Some(markdown::render(&body))
+                Some(markdown::render_with_images(&body, &self.images.borrow()))
             } else {
                 None
             };
@@ -1345,6 +1351,7 @@ impl App {
             return;
         };
         let body = raw.strip_prefix('\u{feff}').unwrap_or(&raw).to_string();
+        let body = self.adopt_images(body);
         self.clear_timeout(&self.save_timer);
         self.save_due_at.set(0.0);
 
@@ -1530,7 +1537,7 @@ impl App {
         image.set_src(url);
     }
 
-    /// Put `![alt](data:…)` into the active editor at the caret.
+    /// Put `![alt](img-…)` into the active editor at the caret.
     fn insert_image(&self, url: &str, filename: &str) {
         if !url.starts_with("data:image") {
             self.set_status("не удалось вставить изображение", "is-error");
@@ -1540,6 +1547,9 @@ impl App {
             self.set_status("изображение слишком большое — сохраните его меньше", "is-error");
             return;
         }
+        let Some(image_id) = self.store_image(url) else {
+            return;
+        };
         let pane = {
             let state = self.state.borrow();
             if state.session.split {
@@ -1568,7 +1578,7 @@ impl App {
         let before = &value[..start_byte];
         let after = &value[end_byte..];
 
-        let marker = format!("![{}]({})", image_alt(filename), url);
+        let marker = format!("![{}]({})", image_alt(filename), image_id);
         let prefix = if before.is_empty() || before.ends_with("\n\n") {
             ""
         } else if before.ends_with('\n') {
@@ -1592,6 +1602,130 @@ impl App {
         self.handle_input(pane);
         let _ = editor.focus();
         self.flash("изображение вставлено", "is-saved", 1800);
+    }
+
+    /// Save image data apart from the note text and return its short id.
+    fn store_image(&self, data: &str) -> Option<String> {
+        if let Some((id, _)) = self
+            .images
+            .borrow()
+            .iter()
+            .find(|(_, value)| value.as_str() == data)
+        {
+            return Some(id.clone());
+        }
+        let total: usize = self.images.borrow().values().map(String::len).sum();
+        if total + data.len() > MAX_IMAGE_STORE {
+            self.set_status("изображение не помещается: хранилище почти полное", "is-error");
+            return None;
+        }
+        let id = util::image_id();
+        self.images
+            .borrow_mut()
+            .insert(id.clone(), data.to_string());
+        let write = {
+            let images = self.images.borrow();
+            storage::write_images(&images)
+        };
+        if write.is_err() {
+            self.images.borrow_mut().remove(&id);
+            self.set_status("не удалось сохранить изображение", "is-error");
+            return None;
+        }
+        Some(id)
+    }
+
+    /// Replace data URLs in an imported note with short ids when possible.
+    fn adopt_images(&self, body: String) -> String {
+        if !body.contains("](data:image/") {
+            return body;
+        }
+        let before: Vec<String> = self.images.borrow().keys().cloned().collect();
+        let tokenized = {
+            let mut images = self.images.borrow_mut();
+            rewrite_data_urls(&body, &mut images)
+        };
+        let write = {
+            let images = self.images.borrow();
+            storage::write_images(&images)
+        };
+        if write.is_ok() {
+            return tokenized;
+        }
+        let mut images = self.images.borrow_mut();
+        let restored = expand_image_tokens(&tokenized, &images);
+        let added: Vec<String> = images
+            .keys()
+            .filter(|id| !before.contains(id))
+            .cloned()
+            .collect();
+        for id in added {
+            images.remove(&id);
+        }
+        drop(images);
+        self.set_status("изображения останутся в тексте: нет места", "is-error");
+        restored
+    }
+
+    /// Move data URLs from notes saved by older versions into the image store.
+    fn adopt_stored_images(&self) {
+        let has_data = {
+            let state = self.state.borrow();
+            state.notes.iter().any(|note| note.body.contains("](data:image/"))
+        };
+        if !has_data {
+            return;
+        }
+        let before: Vec<String> = self.images.borrow().keys().cloned().collect();
+        {
+            let mut state = self.state.borrow_mut();
+            let mut images = self.images.borrow_mut();
+            for note in &mut state.notes {
+                if note.body.contains("](data:image/") {
+                    note.body = rewrite_data_urls(&note.body, &mut images);
+                }
+            }
+        }
+        let written = {
+            let state = self.state.borrow();
+            let images = self.images.borrow();
+            storage::write_state(&state).is_ok() && storage::write_images(&images).is_ok()
+        };
+        if written {
+            return;
+        }
+        let mut state = self.state.borrow_mut();
+        let mut images = self.images.borrow_mut();
+        for note in &mut state.notes {
+            note.body = expand_image_tokens(&note.body, &images);
+        }
+        let added: Vec<String> = images
+            .keys()
+            .filter(|id| !before.contains(id))
+            .cloned()
+            .collect();
+        for id in added {
+            images.remove(&id);
+        }
+        let _ = storage::write_state(&state);
+        let _ = storage::write_images(&images);
+    }
+
+    /// Drop images that no note references any more.
+    fn gc_images(&self) {
+        let mut referenced = std::collections::HashSet::new();
+        {
+            let state = self.state.borrow();
+            for note in &state.notes {
+                collect_image_ids(&note.body, &mut referenced);
+            }
+        }
+        let mut images = self.images.borrow_mut();
+        let before = images.len();
+        images.retain(|id, _| referenced.contains(id));
+        if images.len() != before {
+            let _ = storage::write_images(&images);
+        }
     }
 
     fn on_paste(&self, event: Event) {
@@ -1878,6 +2012,7 @@ impl App {
         }
 
         self.save_quiet();
+        self.gc_images();
         self.render_all();
         self.focus_if_wide();
         self.flash("удалено", "is-saved", 1400);
@@ -1919,6 +2054,7 @@ impl App {
         }
 
         self.save_now();
+        self.gc_images();
         self.render_all();
         self.focus_if_wide();
         self.flash("очищено", "is-saved", 1400);
@@ -1933,7 +2069,10 @@ impl App {
                 .pane_note(pane)
                 .and_then(|id| state.notes.iter().find(|note| note.id == id))
             {
-                Some(note) => (note.body.clone(), note.title()),
+                Some(note) => (
+                    expand_image_tokens(&note.body, &self.images.borrow()),
+                    note.title(),
+                ),
                 None => return,
             }
         };
@@ -2253,7 +2392,7 @@ impl App {
             if let Some(preview) = self.previews.get(pane) {
                 if preview_on {
                     let html = note
-                        .map(|note| markdown::render(&note.body))
+                        .map(|note| markdown::render_with_images(&note.body, &self.images.borrow()))
                         .unwrap_or_default();
                     preview.set_inner_html(&html);
                 } else {
@@ -2632,6 +2771,135 @@ fn first_image_file(data: &DataTransfer) -> Option<File> {
         }
     }
     None
+}
+
+/// `![alt](data:image/…)` -> `![alt](img-…)`, collecting the data separately.
+fn rewrite_data_urls(body: &str, images: &mut HashMap<String, String>) -> String {
+    rewrite_data_urls_with(body, images, util::image_id)
+}
+
+fn rewrite_data_urls_with<F: FnMut() -> String>(
+    body: &str,
+    images: &mut HashMap<String, String>,
+    mut next_id: F,
+) -> String {
+    const MARK: &str = "](data:image/";
+    if !body.contains(MARK) {
+        return body.to_string();
+    }
+    let mut out = String::with_capacity(body.len());
+    let mut rest = body;
+    while let Some(pos) = rest.find(MARK) {
+        let after = &rest[pos + 1..];
+        let Some(end) = after.find(')') else {
+            break;
+        };
+        let data = &after[1..end];
+        let token = match images.iter().find(|(_, value)| value.as_str() == data) {
+            Some((id, _)) => id.clone(),
+            None => {
+                let id = next_id();
+                images.insert(id.clone(), data.to_string());
+                id
+            }
+        };
+        out.push_str(&rest[..pos + 1]);
+        out.push('(');
+        out.push_str(&token);
+        out.push(')');
+        rest = &after[end + 1..];
+    }
+    out.push_str(rest);
+    out
+}
+
+/// `![alt](img-…)` -> `![alt](data:image/…)` for a self-contained export.
+fn expand_image_tokens(body: &str, images: &HashMap<String, String>) -> String {
+    const MARK: &str = "](img-";
+    if !body.contains(MARK) {
+        return body.to_string();
+    }
+    let mut out = String::with_capacity(body.len());
+    let mut rest = body;
+    while let Some(pos) = rest.find(MARK) {
+        let after = &rest[pos + 1..];
+        let Some(end) = after.find(')') else {
+            break;
+        };
+        let id = &after[1..end];
+        out.push_str(&rest[..pos + 1]);
+        out.push('(');
+        match images.get(id) {
+            Some(data) => out.push_str(data),
+            None => out.push_str(id),
+        }
+        out.push(')');
+        rest = &after[end + 1..];
+    }
+    out.push_str(rest);
+    out
+}
+
+fn collect_image_ids(body: &str, out: &mut std::collections::HashSet<String>) {
+    const MARK: &str = "](img-";
+    let mut rest = body;
+    while let Some(pos) = rest.find(MARK) {
+        let after = &rest[pos + 1..];
+        let Some(end) = after.find(')') else {
+            break;
+        };
+        out.insert(after[1..end].to_string());
+        rest = &after[end + 1..];
+    }
+}
+
+#[cfg(test)]
+mod image_tests {
+    use super::{collect_image_ids, expand_image_tokens, rewrite_data_urls_with};
+    use std::collections::{HashMap, HashSet};
+
+    fn tokenize(body: &str, images: &mut HashMap<String, String>) -> String {
+        let mut counter = 0usize;
+        rewrite_data_urls_with(body, images, || {
+            counter += 1;
+            format!("img-test-{counter}")
+        })
+    }
+
+    #[test]
+    fn data_urls_become_short_ids_and_come_back() {
+        let mut images = HashMap::new();
+        let body = "до\n\n![схема](data:image/png;base64,AAAA)\n\nпосле";
+        let tokenized = tokenize(body, &mut images);
+        assert!(!tokenized.contains("data:image"), "{tokenized}");
+        assert!(tokenized.contains("![схема](img-test-1)"), "{tokenized}");
+        assert_eq!(images.len(), 1);
+        assert_eq!(expand_image_tokens(&tokenized, &images), body);
+
+        let mut ids = HashSet::new();
+        collect_image_ids(&tokenized, &mut ids);
+        assert_eq!(ids.len(), 1);
+    }
+
+    #[test]
+    fn the_same_image_reuses_its_id() {
+        let mut images = HashMap::new();
+        let url = "data:image/png;base64,BBBB";
+        let first = tokenize(&format!("![a]({url})"), &mut images);
+        let second = tokenize(&format!("![b]({url})"), &mut images);
+        assert_eq!(images.len(), 1);
+        assert!(first.ends_with("(img-test-1)"), "{first}");
+        assert!(second.ends_with("(img-test-1)"), "{second}");
+    }
+
+    #[test]
+    fn text_without_images_is_untouched() {
+        let mut images = HashMap::new();
+        let body = "![alt](https://example.com/a.png)\n\n![x](img-unknown)";
+        assert_eq!(tokenize(body, &mut images), body);
+        assert!(images.is_empty());
+        assert_eq!(expand_image_tokens(body, &images), body);
+    }
 }
 
 fn image_alt(filename: &str) -> String {
