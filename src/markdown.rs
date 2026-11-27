@@ -31,7 +31,7 @@ pub fn render_with_images(source: &str, images: &HashMap<String, String>) -> Str
 }
 
 fn resolve_images(html: String, images: &HashMap<String, String>) -> String {
-    if images.is_empty() || !html.contains("src=\"img-") {
+    if !html.contains("src=\"img-") {
         return html;
     }
     let mut out = String::with_capacity(html.len());
@@ -51,6 +51,7 @@ fn resolve_images(html: String, images: &HashMap<String, String>) -> String {
         let value = &rest[..end];
         match images.get(value) {
             Some(data) => out.push_str(data),
+            None if value.starts_with("img-") => out.push_str(MISSING_IMAGE),
             None => out.push_str(value),
         }
         out.push('"');
@@ -58,6 +59,9 @@ fn resolve_images(html: String, images: &HashMap<String, String>) -> String {
     }
     out
 }
+
+/// Shown instead of a broken image after the picture cache was cleared.
+const MISSING_IMAGE: &str = "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='480' height='160'%3E%3Crect width='480' height='160' rx='12' fill='%23efece6'/%3E%3Cpath d='M170 112l40-44 32 34 24-26 44 48H170z' fill='%23c9c2b6'/%3E%3Ccircle cx='300' cy='60' r='12' fill='%23c9c2b6'/%3E%3C/svg%3E";
 
 /// pulldown-cmark renders task-list items as `disabled` checkboxes, which the
 /// browser refuses to deliver clicks to. Re-enable them and number them so the
@@ -84,11 +88,26 @@ fn activate_task_checkboxes(html: String) -> String {
 
 #[cfg(test)]
 mod tests {
+    use std::collections::HashMap;
+
     #[test]
     fn images_keep_their_data_url() {
         let html = super::render("![схема](data:image/png;base64,iVBORw0KGgo=)");
         assert!(html.contains("<img src=\"data:image/png;base64,iVBORw0KGgo=\""), "{html}");
         assert!(html.contains("alt=\"схема\""), "{html}");
+    }
+
+    #[test]
+    fn stored_images_resolve_and_missing_ones_get_a_placeholder() {
+        let mut images = HashMap::new();
+        images.insert("img-test-1".to_string(), "data:image/png;base64,AAAA".to_string());
+        let html = super::render_with_images(
+            "![a](img-test-1)\n\n![b](img-test-2)",
+            &images,
+        );
+        assert!(html.contains("data:image/png;base64,AAAA"), "{html}");
+        assert!(html.contains("data:image/svg+xml"), "{html}");
+        assert!(!html.contains("img-test-2"), "{html}");
     }
 
     #[test]

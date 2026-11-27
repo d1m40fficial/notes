@@ -540,6 +540,84 @@ a {
   text-align: center;
 }
 
+/* ---------- pinned picture cache ---------- */
+
+.cache-item {
+  position: sticky;
+  bottom: -8px;
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 8px -8px -8px;
+  padding: 9px 10px 9px 13px;
+  background: var(--panel);
+  border-top: 1px solid var(--line);
+}
+
+.cache-item__icon {
+  display: grid;
+  place-items: center;
+  width: 20px;
+  height: 20px;
+  color: var(--faint);
+  flex: 0 0 auto;
+}
+
+.cache-item__icon .icon {
+  width: 14px;
+  height: 14px;
+}
+
+.cache-item__text {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+}
+
+.cache-item__title {
+  color: var(--muted);
+  font-family: var(--sans);
+  font-size: 0.74rem;
+  letter-spacing: -0.005em;
+}
+
+.cache-item__meta {
+  overflow: hidden;
+  color: var(--faint);
+  font-family: var(--mono);
+  font-size: 0.5rem;
+  letter-spacing: 0.02em;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cache-item__clear {
+  display: grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  color: var(--faint);
+  background: none;
+  border: 0;
+  border-radius: 5px;
+  cursor: pointer;
+}
+
+.cache-item__clear .icon {
+  width: 13px;
+  height: 13px;
+}
+
+.cache-item__clear:hover {
+  color: var(--accent);
+  background: var(--rail);
+}
+
+
 /* ---------- workspace and toolbar ---------- */
 
 .workspace {

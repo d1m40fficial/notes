@@ -495,6 +495,7 @@ impl App {
             "split" => self.toggle_split(),
             "import" => self.open_import_dialog(),
             "image" => self.open_image_dialog(),
+            "cache-clear" => self.clear_images(),
             "export" => self.export_active(),
             "clear" => self.clear_active(),
             "note-open" | "note-split" | "note-delete" | "note-rename" => {
@@ -1601,7 +1602,33 @@ impl App {
         let _ = editor.set_selection_range(caret as u32, caret as u32);
         self.handle_input(pane);
         let _ = editor.focus();
+        self.render_list();
         self.flash("изображение вставлено", "is-saved", 1800);
+    }
+
+    /// Empty the picture cache. Note links stay in the text but stop resolving.
+    fn clear_images(&self) {
+        let count = self.images.borrow().len();
+        if count == 0 {
+            self.flash("кеш уже пуст", "is-saved", 1400);
+            return;
+        }
+        let message = format!(
+            "Очистить кеш картинок? {} {} удалятся, ссылки в заметках перестанут показывать изображения.",
+            count,
+            plural(count, "картинка", "картинки", "картинок")
+        );
+        if !self.window.confirm_with_message(&message).unwrap_or(false) {
+            return;
+        }
+        self.images.borrow_mut().clear();
+        let _ = {
+            let images = self.images.borrow();
+            storage::write_images(&images)
+        };
+        self.render_panes();
+        self.render_list();
+        self.flash("кеш очищен", "is-saved", 1600);
     }
 
     /// Save image data apart from the note text and return its short id.
@@ -2433,6 +2460,8 @@ impl App {
                 let _ = self.list.append_child(&item);
             }
         }
+        let cache = self.build_cache_item();
+        let _ = self.list.append_child(&cache);
 
         let count = state.notes.len();
         self.note_count.set_text_content(Some(&count.to_string()));
@@ -2443,6 +2472,59 @@ impl App {
         );
         self.sidebar_meta.set_text_content(Some(&label));
         let _ = self.list.set_scroll_top(scroll);
+    }
+
+    /// Pinned row at the bottom of the list: the picture cache.
+    fn build_cache_item(&self) -> Element {
+        let (count, chars) = {
+            let images = self.images.borrow();
+            (
+                images.len(),
+                images.values().map(String::len).sum::<usize>(),
+            )
+        };
+        let kb = (chars + 1023) / 1024;
+
+        let item = self.el("div");
+        item.set_class_name("cache-item");
+        let _ = item.set_attribute("role", "listitem");
+        let _ = item.set_attribute(
+            "title",
+            "Картинки из заметок хранятся здесь. Очистка удалит их, ссылки в тексте останутся.",
+        );
+
+        let badge = self.el("span");
+        badge.set_class_name("cache-item__icon");
+        badge.set_inner_html(&icon("image", ""));
+
+        let text = self.el("span");
+        text.set_class_name("cache-item__text");
+        let title = self.el("span");
+        title.set_class_name("cache-item__title");
+        title.set_text_content(Some("кеш картинок"));
+        let meta = self.el("span");
+        meta.set_class_name("cache-item__meta");
+        meta.set_text_content(Some(&format!(
+            "{} {} · {} КБ",
+            count,
+            plural(count, "картинка", "картинки", "картинок"),
+            kb
+        )));
+        let _ = text.append_child(&title);
+        let _ = text.append_child(&meta);
+
+        let clear = self.el("button");
+        clear.set_class_name("cache-item__clear");
+        let _ = clear.set_attribute("type", "button");
+        let _ = clear.set_attribute("data-act", "cache-clear");
+        let _ = clear.set_attribute("title", "Очистить кеш картинок");
+        let _ = clear.set_attribute("aria-label", "Очистить кеш картинок");
+        clear.set_inner_html(&icon("trash", ""));
+
+        let _ = item.append_child(&badge);
+        let _ = item.append_child(&text);
+        let _ = item.append_child(&clear);
+        item
     }
 
     fn build_note_item(&self, note: &Note, session: &Session) -> Element {
